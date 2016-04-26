@@ -1,8 +1,6 @@
-import numpy as np
-from mpl_toolkits.mplot3d import axes3d
-
 import cPickle
 import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import axes3d
 import os
 os.environ["FONTCONFIG_PATH"]="/etc/fonts"
 
@@ -13,28 +11,47 @@ from easy21 import *
 
 Qtable = np.zeros((21,10,2))
 Nsa = np.zeros((21,10,2))
-# policy = np.zeros(21,10)
+lambda_ = 0.9
 
 def runepisode():
 
-    #initialize the state randomly
+    #initialize the state and acion randomly at beginning of episode
     state = np.random.randint(low = 1, high=10, size=None),np.random.randint(low = 1, high=10, size=None) #player, dealer
+    A = policy(state)
 
     terminated = False
     while( not terminated):
-        # action = policy(Qtable[state])
-        action = policy(state)
-        reward, successor, terminated = step(state[0],state[1],action)
-        episode.append((state,action,reward))
+
+        reward, successor, terminated = step(state[0],state[1],A)
+        #print("successor" , successor)
+        if not terminated:
+            A_prime = policy(successor)
+            Qsprime_aprime = Qtable[successor[0]-1,successor[1]-1,A_prime]
+        else:
+            Qsprime_aprime = 0
+
+        delta = reward + Qsprime_aprime - Qtable[state[0]-1,state[1]-1,A]
+        episode.append((state,A,reward))
 
         #counting state visits
-        Nsa[state[0]-1,state[1]-1,action] += 1
+        Nsa[state[0]-1,state[1]-1,A] += 1
+        Esa[state[0]-1,state[1]-1,A] += 1
 
-        state = successor
+        for s, a, reward in episode:
+            alpha = 1/Nsa[s[0]-1,s[1]-1,a]
+            Qtable[s[0]-1,s[1]-1,a] += alpha*delta*Esa[s[0]-1,s[1]-1,a]
+            Esa[s[0]-1,s[1]-1,a]*= lambda_
+
+
+
+        if not terminated:
+            A = A_prime
+            state = successor
 
 
 def policy(state):
-
+    # print(Nsa)
+    # print Nsa.shape
     Ns = Nsa[state[0]-1,state[1]-1,0] + Nsa[state[0]-1,state[1]-1,1]
     N_0 = 100
     epsilon = N_0/(N_0 + Ns)
@@ -45,17 +62,14 @@ def policy(state):
     else:
         return np.random.choice([1,0])
 
-numiter = 10000000
+numiter = 1000000
 
 # policy = np.argmax(Qtable[state])
 for i in range(numiter):
     episode = []  #just one episode
+    Esa = np.zeros((21,10,2))
+    print i
     runepisode()
-    Gt = episode[-1][2]
-
-    for state, action, reward in episode:
-        Qtable[state[0]-1,state[1]-1,action] += (1/Nsa[state[0]-1,state[1]-1,action])*(Gt - Qtable[state[0]-1,state[1]-1,action])
-
 
 
 opt_Valuefunction = np.max(Qtable,2)
@@ -89,6 +103,3 @@ plt.show()
 pkl_file = open('opt_valuefcn.pkl', 'rb')
 data1 = cPickle.load(pkl_file)
 pkl_file.close()
-
-
-

@@ -69,7 +69,7 @@ import numpy as np
 def step(player_sum, dealer_sum, action): #action; 1 hit, 0 stick
     reward = 0
     terminated = False
-    print("action", action)
+    # print("action", action)
     if action: # when hitting
         player_sum+= np.random.choice([-1,1,1])*np.random.randint(low = 1, high=10, size=None)
         successor_state = (player_sum, dealer_sum)
