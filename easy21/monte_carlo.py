@@ -17,7 +17,7 @@ Nsa = np.zeros((21,10,2))
 
 def runepisode():
 
-    #initialize the state randomly
+    # initialize the state randomly
     state = np.random.randint(low = 1, high=10, size=None),np.random.randint(low = 1, high=10, size=None) #player, dealer
 
     terminated = False
@@ -45,7 +45,7 @@ def policy(state):
     else:
         return np.random.choice([1,0])
 
-numiter = 10000000
+numiter = 1000000
 
 # policy = np.argmax(Qtable[state])
 for i in range(numiter):
@@ -63,10 +63,11 @@ print(opt_Valuefunction.shape)
 
 
 ## save to file
-save = False
+save = True
 if save:
-    output = open('opt_valuefcn.pkl', 'wb')
-    cPickle.dump(opt_Valuefunction, output)
+    output = open('Qtable_monte_carlo_1e6.pkl', 'wb')
+    cPickle.dump(Qtable, output)
+    print Qtable.shape
     output.close()
 
 fig = plt.figure()
@@ -80,15 +81,13 @@ ax.set_zlabel("value")
 
 fig = plt.figure()
 opt_policy = np.argmax(Qtable,2)
-plt.imshow(opt_policy,cmap=plt.get_cmap('gray'),interpolation='none')
+plt.imshow(opt_policy,cmap=plt.get_cmap('gray'),interpolation='none', extent=[1,10,1,21])
+
+plt.xlabel("dealer")
+plt.ylabel("player")
+
 plt.show()
 
-
-
-
-pkl_file = open('opt_valuefcn.pkl', 'rb')
-data1 = cPickle.load(pkl_file)
-pkl_file.close()
 
 
 
