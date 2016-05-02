@@ -1,3 +1,5 @@
 */.idea/
 gym
-*/*.pyc
+*.pyc
+.ipynb_checkpoints
+python
