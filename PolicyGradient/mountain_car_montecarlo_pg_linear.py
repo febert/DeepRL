@@ -21,8 +21,9 @@ class mountain_car():
 
         # lengths of all the played episodes
         self.episode_lengths = []
+
         # lengths of all the tested episodes TODO
-        # self.test_lengths = []
+        self.test_lengths = []
 
         # policy parameters
             # random initialization
@@ -39,7 +40,9 @@ class mountain_car():
         # too long episodes give too much negative reward!!!!
         # self.max_episode_length = 1000000
         # ----> Use gamma!!!!! TODO: slower decrease?
-        self.gamma = 0.99
+        self.gamma = 0.99  #similar to 0.9
+
+        self.N_0 = 50
 
         np.seterr(all='raise')
 
@@ -122,6 +125,10 @@ class mountain_car():
         # count = 0
         done = False
         while ( not done ):
+
+            if self.policy_mode== "deterministic":
+                if len(episode)>10000: break
+
             # count += 1
             action = self.policy(state, mode=self.policy_mode)
             state, reward, done, info = self.env.step(action)
@@ -152,10 +159,19 @@ class mountain_car():
 
     def train(self, iter=1000):
         # fig = plt.figure()
+
         for it in range(iter):
             if (it+1)%10 == 0:
                 print("EPISODE #{}".format(it+1))
                 print("with a exploration of {}%".format(self.epsilon*100))
+                print(self.policy_mode)
+
+                self.policy_mode = "deterministic"
+                det_episode = self.run_episode()
+
+                self.test_lengths.append(len(det_episode))
+                self.policy_mode = "stochastic"
+
             episode = self.run_episode()
             self.episode_lengths.append(len(episode))
             if (it+1)%10 == 0:
@@ -206,13 +222,14 @@ class mountain_car():
                 self.plot_policy()
             if (it+1)%100 == 0:
                 self.plot_training()
+                self.plot_testing()
                 # self.test_episode
             # if i % 10 == 0:
             #     plt.plot(episode_lengths)
             #     plt.show()
             self.total_runs += 1
             if self.update_epsilon:
-                self.epsilon = 500. / (500. + self.total_runs)
+                self.epsilon = self.N_0 / (self.N_0 + self.total_runs)
         return self.theta
 
 
@@ -248,11 +265,21 @@ class mountain_car():
         plt.ylabel("position")
         plt.show()
 
+
+
         # restore value
         self.epsilon = save_epsilon
+
 
     def plot_training(self):
 
         fig = plt.figure()
         plt.plot(self.episode_lengths)
+        plt.show()
+
+
+    def plot_testing(self):
+
+        fig = plt.figure()
+        plt.plot(self.test_lengths)
         plt.show()
