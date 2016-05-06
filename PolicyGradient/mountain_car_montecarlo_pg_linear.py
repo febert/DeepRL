@@ -119,15 +119,17 @@ class mountain_car():
         episode = []
         state = self.env.reset()
 
-        # count = 0
+        count = 0
         done = False
         while ( not done ):
-            # count += 1
+            count += 1
             action = self.policy(state, mode=self.policy_mode)
             state, reward, done, info = self.env.step(action)
             episode.append((state, action, reward))
             if enable_render: self.env.render()
             # if count > self.max_episode_length: break;
+
+        if enable_render: print("This episode took {} steps".format(count))
 
         return episode
 
