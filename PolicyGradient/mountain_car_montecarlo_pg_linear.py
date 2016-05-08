@@ -12,7 +12,8 @@ class mountain_car():
                  num_features=2,
                  init_epsilon=1.0,
                  update_epsilon=True,
-                 policy_mode='stochastic'):
+                 policy_mode='stochastic',
+                 N_0=50.):
         self.env = gym.make('MountainCar-v0')
         self.num_actions = 3
         self.num_features = num_features
@@ -42,7 +43,7 @@ class mountain_car():
         # ----> Use gamma!!!!! TODO: slower decrease?
         self.gamma = 0.99  #similar to 0.9
 
-        self.N_0 = 50
+        self.N_0 = N_0
 
         np.seterr(all='raise')
 
@@ -127,7 +128,7 @@ class mountain_car():
         while ( not done ):
 
             if self.policy_mode== "deterministic":
-                if len(episode)>10000: break
+                if len(episode)>1000000: break
 
             count += 1
 
@@ -153,9 +154,8 @@ class mountain_car():
             print(error)
             print("features", features)
             print("prob_distrib", prob_distrib)
-        # print("score",score)
+
         score[:,action] += features
-        # print("score",score)
 
         return score
 
@@ -164,21 +164,27 @@ class mountain_car():
         # fig = plt.figure()
 
         for it in range(iter):
+            # run episode
+            episode = self.run_episode()
+            # keep track of training episode lengths
+            self.episode_lengths.append(len(episode))
+
             if (it+1)%10 == 0:
+                # output training info
                 print("EPISODE #{}".format(it+1))
                 print("with a exploration of {}%".format(self.epsilon*100))
+                print("lasted {0} steps".format(len(episode)))
+
+                # do a test run
+                save_policy_mode = self.policy_mode
                 print(self.policy_mode)
 
                 self.policy_mode = "deterministic"
                 det_episode = self.run_episode()
 
                 self.test_lengths.append(len(det_episode))
-                self.policy_mode = "stochastic"
+                self.policy_mode = save_policy_mode
 
-            episode = self.run_episode()
-            self.episode_lengths.append(len(episode))
-            if (it+1)%10 == 0:
-                print("lasted {0} steps".format(len(episode)))
             # theta += alpha*calculate_gradient()
             # Version reversed (equivalent if only updated at the end)
             theta_update = 0
@@ -188,7 +194,7 @@ class mountain_car():
                 value_fcn = reward + self.gamma*value_fcn
                 theta_update += self.score_function(state,action)*value_fcn
                 # TODO: check sign in this line. HAS IT TO BE -. WHY??
-            self.theta -= self.alpha*theta_update
+            self.theta += self.alpha*theta_update
             ## Original version
             # value_fcn = np.zeros(len(episode))
             # value_fcn[-1] = episode[-1][2]
@@ -230,9 +236,12 @@ class mountain_car():
             # if i % 10 == 0:
             #     plt.plot(episode_lengths)
             #     plt.show()
+
+            # decrease exploration
             self.total_runs += 1
             if self.update_epsilon:
                 self.epsilon = self.N_0 / (self.N_0 + self.total_runs)
+
         return self.theta
 
 
