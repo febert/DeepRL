@@ -368,3 +368,83 @@ class mountain_car():
         plt.plot(self.test_lengths)
         plt.yscale('log')
         plt.show()
+
+
+    def compare_gradients(self,):
+
+        self.theta = np.array([[-0.01338339, -0.01746333 , 0.03084672],[-0.38015887 , 0.00830843,  0.37185044]])
+
+        numepisodes = 200
+        self.epsilon = 0  #the exploration has to be set to zero!
+
+        self.policy_mode = 'deterministic'  # could work with stocastic as well
+
+        self.compute_with_policy_gradient_theorem(numepisodes)
+        self.compute_numeric_gradient(numepisodes)
+
+
+
+
+    def compute_with_policy_gradient_theorem(self, numepisodes):
+
+        accum_values = np.zeros_like(self.theta)
+        for epi_number in range(numepisodes):
+
+            episode = self.run_episode()
+
+
+            #print(self.policy_mode)
+            value_fcn = 0
+            for idx in range(len(episode),0,-1):
+                (state, action, reward) = episode[idx-1]
+                value_fcn = reward + self.gamma*value_fcn
+                accum_values += self.score_function(state,action)*value_fcn
+
+
+            #print(len(episode))
+
+        average_gradient = accum_values/numepisodes
+
+        print('average gradient computed with policy gradient theorem')
+        print('result after %d episodes:'%(numepisodes))
+        print(average_gradient)
+
+
+    def compute_numeric_gradient(self,numepisodes):
+
+        average_numeric_gradient = np.zeros_like(self.theta)
+        numeric_gradient_accum = np.zeros_like(self.theta)
+
+        theta_saved = np.array(self.theta)
+
+        before = 0.0
+        for epi_number in range(numepisodes):
+            before -= len(self.run_episode())  # compute length of episode before applying perturbations
+        before=float(before)/numepisodes
+
+        print('average episode length before perturbation',before)
+
+        for i in range(self.theta.shape[0]):
+            for j in range(self.theta.shape[1]):
+
+                for epi_number in range(numepisodes):
+                    perturbation = 1e-5
+                    # perturb the selected parameter
+                    self.theta = np.array(theta_saved)
+                    self.theta[i][j]+= perturbation
+
+                    after = -len(self.run_episode())
+                    #print('episode length after perturbing element %d,%d : %d' % (i,j,after) )
+
+                    numeric_gradient_accum[i][j]+= float(after-before)/perturbation
+
+                print(i, j)
+                print( numeric_gradient_accum)
+
+                average_numeric_gradient[i][j] = numeric_gradient_accum[i][j] /numepisodes
+
+        print('average gradient computed numerically')
+        print('result after %d episodes:'% (numepisodes))
+        print(average_numeric_gradient)
+
+        self.theta = np.array(theta_saved)
