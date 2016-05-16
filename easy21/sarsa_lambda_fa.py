@@ -197,7 +197,7 @@ class sarsa_fa:
 
         fig = plt.figure()
         for i in range(11):
-            line1, = plt.plot(range(len(self.error_lists[i])), self.error_lists[i], label="lambda ="+str(np.linspace(0,1,11)[i]))
+            line1, = plt.plot(range(len(self.error_lists[i])), self.error_lists[i], label="lambda ="+str(np.linspace(0,1,3)[i]))
             plt.legend(handles=[line1], loc=1)
 
         plt.xlabel("1000 episodes")

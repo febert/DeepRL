@@ -3,6 +3,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import time
 
+import cPickle
+
 import gym as gym
 
 class mountain_car():
@@ -16,7 +18,18 @@ class mountain_car():
                  update_epsilon=True,
                  policy_mode='stochastic',
                  N_0=50.,
-                 random_init_theta=False):
+                 random_init_theta=False,
+                 negative_gradient = False):
+
+
+        if negative_gradient:
+            self.baseline_enable = 0
+            self.gradient_sign = -1
+        else:
+            self.baseline_enable = 1
+            self.gradient_sign = 1
+
+
         self.env = gym.make('MountainCar-v0')
         self.num_actions = 3
         self.num_features = num_features
@@ -204,7 +217,7 @@ class mountain_car():
 
         return score
 
-    def train(self, iter=1000):
+    def train(self, iter=1000, dataname = 'dataname', save = False):
         # fig = plt.figure()
 
         for it in range(iter):
@@ -226,7 +239,7 @@ class mountain_car():
                 save_epsilon = self.epsilon
                 # print(self.policy_mode)
 
-                # self.policy_mode = "deterministic"
+                self.policy_mode = "deterministic"
                 self.epsilon = 0.
                 det_episode = self.run_episode(limit=10000)
 
@@ -252,16 +265,19 @@ class mountain_car():
                 (state, action, reward) = episode[idx-1]
                 value_fcn = reward + self.gamma*value_fcn
                 # incrementally calculate theta update
-                theta_update += self.score_function(state,action)*(value_fcn - self.mean_value_fcn)
+                theta_update += self.score_function(state,action)*(value_fcn - self.mean_value_fcn*self.baseline_enable)
                 # mean value function
                 mean_value += value_fcn / len(episode)
                 # TODO: check sign in this line. HAS IT TO BE -. WHY??
             # update theta
-            self.theta += self.alpha*theta_update
+            self.theta += self.alpha*theta_update*self.gradient_sign
             # update mean value function
                 # if it is not the first run
             if self.total_runs > 1.1:
                 self.mean_value_fcn += (mean_value - self.mean_value_fcn) / self.total_runs
+
+
+            #print('theta_update', theta_update)
 
             ## Original version
             # value_fcn = np.zeros(len(episode))
@@ -297,7 +313,7 @@ class mountain_car():
             if (it+1)%10 == 0:
                 print("theta")
                 print(self.theta)
-                self.plot_policy()
+                self.plot_policy(mode= 'deterministic')
             if (it+1)%100 == 0:
                 self.plot_training()
                 self.plot_testing()
@@ -313,10 +329,39 @@ class mountain_car():
             if not self.constant_alpha:
                 self.alpha = self.init_alpha / np.sqrt(self.total_runs)
 
+
+            if save:
+                self.savedata(dataname=dataname)
+
         return self.theta
 
 
-    def plot_policy(self, resolution=100):
+
+    def savedata(self, dataname):
+
+        output = open(dataname, 'wb')
+        cPickle.dump(self.theta, output)
+        cPickle.dump(self.episode_lengths, output)
+
+        cPickle.dump(self.test_lengths, output)
+        output.close()
+
+    def loaddata(self, dataname):
+
+        pkl_file = open(dataname, 'rb')
+        self.theta = cPickle.load(pkl_file)
+        self.episode_lengths = cPickle.load(pkl_file)
+        self.test_lengths = cPickle.load(pkl_file)
+
+        print( self.theta)
+        print( self.episode_lengths)
+        print( self.episode_lengths)
+
+
+        pkl_file.close()
+
+
+    def plot_policy(self, resolution=100, mode= 'stochastic'):
 
         # backup of value
         save_epsilon = self.epsilon
@@ -334,7 +379,7 @@ class mountain_car():
         for i, x in enumerate(x_range):
             for j, v in enumerate(v_range):
                 # print(np.argmax(self.get_features((x,v)).dot(self.theta)), end="")
-                greedy_policy[i,j] = self.policy((x,v),'stochastic')
+                greedy_policy[i,j] = self.policy((x,v),mode)
         print("")
 
         # plot policy
