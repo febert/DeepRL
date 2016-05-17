@@ -24,6 +24,7 @@ class mountain_car():
                  random_init_theta=False,
                  negative_gradient = False,
                  environment = 'MountainCar-v0',
+                 lambda_ = 0.5
                  ):
 
 
@@ -56,15 +57,6 @@ class mountain_car():
 
         ## policy parameters initialization
 
-        if self.type_features == 2:
-            self.num_features = 2
-        if self.type_features == 3:
-            self.num_features = 3
-        if self.type_features == 4:
-            self.num_features = 4
-        if self.type_features == 5:
-            self.num_features = 5
-
         #tile features:
         self.tile_resolution = 10
         self.num_tile_features = pow(self.tile_resolution,self.statedim)*2
@@ -72,9 +64,9 @@ class mountain_car():
         #for the value function estimation:
         self.v = np.zeros(self.num_tile_features)
         self.eligibility_vector = np.zeros(self.num_tile_features)
-        self.eligibility_vector_theta = np.zeros(self.num_tile_features)
+        self.eligibility_vector_theta = np.zeros(self.num_tile_features*self.num_actions)
 
-        self.lambda_ = 0.99
+        self.lambda_ = lambda_
 
         if random_init_theta:
             # random initialization
@@ -101,6 +93,7 @@ class mountain_car():
         print('N_0',self.N_0)
         print('init alpha',self.init_alpha)
         print('Constant Alpha', constant_alpha)
+        print('lambda',self.lambda_)
 
 
 
@@ -115,9 +108,11 @@ class mountain_car():
         stepsize = (high - low)/self.tile_resolution
 
         ind = np.floor((state-low)/stepsize).astype(int)
+        ind[ind>=self.tile_resolution]=self.tile_resolution-1  #bound the index so that it doesn't exceed bounds
         ind = tuple(ind)
 
         ind_shift = np.floor((state-low-stepsize/2)/stepsize).astype(int)
+        ind_shift[ind_shift>=self.tile_resolution]=self.tile_resolution-1  #bound the index so that it doesn't exceed bounds
         ind_shift = tuple(ind_shift)
 
         grid = np.zeros(np.ones(obs_dim)*self.tile_resolution)
@@ -131,19 +126,13 @@ class mountain_car():
             print("high", high)
             print("low", low)
 
+            return
+
         grid_shift = np.zeros(np.ones(obs_dim)*self.tile_resolution)
         grid_shift[ind_shift] = 1
 
         flatgrid = np.concatenate((grid,grid_shift), axis= 0).flatten()
 
-        length_flatgrid = flatgrid.shape[0]
-
-        #used for when approximating
-        #full_feature = np.zeros(self.num_actions,length_flatgrid*numactions)
-        #for action in range(self.num_actions):
-        #    full_feature[action,length_flatgrid*action: (action+1)*length_flatgrid] = flatgrid
-
-        #return  full_feature
         return  flatgrid
 
     def get_full_feature(self,state):
@@ -151,15 +140,17 @@ class mountain_car():
         flatgrid = self.get_tile_feature(state)
         length_flatgrid = flatgrid.shape[0]
 
-        full_feature = np.zeros(self.num_actions,length_flatgrid*self.numactions)
+        full_feature = np.zeros((self.num_actions,length_flatgrid*self.num_actions))
         for action in range(self.num_actions):
             full_feature[action,length_flatgrid*action: (action+1)*length_flatgrid] = flatgrid
 
+        return full_feature
+
     # TODO: better solution to over-/underflows? Maybe not needed if proper learning?
-    def eval_action_softmax_probabilities(self, state):
+    def eval_action_softmax_probabilities(self, full_feature):
 
         #softmax probability
-        activation = self.get_tile_feature(state).dot(self.theta)
+        activation = full_feature.dot(self.theta)
         activation-= np.max(activation)
 
         # trying to workaround over and underflows
@@ -190,7 +181,7 @@ class mountain_car():
             # print('deterministic')
             return np.argmax(features.dot(self.theta))
         elif mode=='stochastic' and not explore:
-            prob_distrib = self.eval_action_softmax_probabilities(state)
+            prob_distrib = self.eval_action_softmax_probabilities(self.get_full_feature(state))
             # print('stochastic', prob_distrib)
             return np.random.choice(np.arange(self.num_actions),p=prob_distrib)
         elif explore:
@@ -220,24 +211,20 @@ class mountain_car():
 
         return episode
 
-
     # gradient of the policy function
-    def score_function(self, state, action, tile_feature=False):
-        if tile_feature:
-            features = self.get_tile_feature(state)
-        else:
-            features = self.get_features(state)
-        #print('features', features)
+    def score_function(self, state, action):
 
-        prob_distrib = self.eval_action_softmax_probabilities(state)
+        full_features = self.get_full_feature(state)
+
+        prob_distrib = self.eval_action_softmax_probabilities(full_features)
 
         try:
-            score = features[action] - prob_distrib.dot(features)
+            score = full_features[action] - prob_distrib.dot(full_features)
             # print("score neg")
             # print(score)
         except FloatingPointError, error:
             print(error)
-            print("features", features)
+            print("features", full_features)
             print("prob_distrib", prob_distrib)
 
         return score
@@ -293,77 +280,27 @@ class mountain_car():
                 self.epsilon = save_epsilon
 
 
-            if self.algorithm == 'v_actor_critic':
+            tile_features_mat = np.zeros((len(episode), self.num_tile_features))
+            for idx in range(len(episode)):
+                tile_features_mat[idx,:] = self.get_tile_feature(episode[idx][0])
 
-                if not(len(episode)==0):
-                    (state, action, reward) = episode[0]
-                previous_state = state #initialize with the start state
-                self.eligibiltiy_vector = np.zeros(self.num_tile_features)
-                for idx in range(1,len(episode)):
-                    (state, action, reward) = episode[idx]
-                    Vs = self.get_tile_feature(previous_state).dot(self.v)
-                    Vs_prime = self.get_tile_feature(state).dot(self.v)
+            #offline td-lambda for estimating the value function
+            if not(len(episode)==0):
+                (state, action, reward) = episode[0]
+            self.eligibiltiy_vector = np.zeros(self.num_tile_features)
+            for idx in range(1,len(episode)):
+                (state, action, reward) = episode[idx]
+                Vs = tile_features_mat[idx-1].dot(self.v)
+                Vs_prime = tile_features_mat[idx].dot(self.v)
 
-                    delta_t = reward + self.gamma*Vs_prime - Vs
+                delta_t = reward + self.gamma*Vs_prime - Vs
 
-                    self.eligibiltiy_vector = self.eligibiltiy_vector*self.gamma*self.lambda_ + self.get_tile_feature(state)
-                    # print('eligibiltiy_vector', eligibiltiy_vector)
-                    # print('delta_t', delta_t)
-                    # print('Vs',Vs)
-                    # print('Vs_prime',Vs_prime)
-                    # print('v',self.v)
-                    self.v += 1e-3*delta_t*self.eligibiltiy_vector
+                self.eligibiltiy_vector = self.eligibiltiy_vector*self.gamma*self.lambda_ + tile_features_mat[idx]
 
+                self.v += 1e-3*delta_t*self.eligibiltiy_vector
 
-                    self.eligibility_vector_theta = self.eligibility_vector_theta*self.lambda_ + self.score_function(state,action)
-                    self.theta += self.alpha*self.eligibility_vector_theta*delta_t
-                    previous_state = state
-
-            if self.algorithm == 'reinforce':
-
-                #offline td-lambda for estimating the value function
-                if not(len(episode)==0):
-                    (state, action, reward) = episode[0]
-                previous_state = state #initialize with the start state
-                self.eligibiltiy_vector = np.zeros(self.num_tile_features)
-                for idx in range(1,len(episode)):
-                    (state, action, reward) = episode[idx]
-                    Vs = self.get_tile_feature(previous_state).dot(self.v)
-                    Vs_prime = self.get_tile_feature(state).dot(self.v)
-
-                    delta_t = reward + self.gamma*Vs_prime - Vs
-
-                    self.eligibiltiy_vector = self.eligibiltiy_vector*self.gamma*self.lambda_ + self.get_tile_feature(state)
-                    # print('eligibiltiy_vector', eligibiltiy_vector)
-                    # print('delta_t', delta_t)
-                    # print('Vs',Vs)
-                    # print('Vs_prime',Vs_prime)
-                    # print('v',self.v)
-                    self.v += 1e-3*delta_t*self.eligibiltiy_vector
-                    previous_state = state
-
-                # theta += alpha*calculate_gradient()
-                # Version reversed (equivalent if only updated at the end)
-                theta_update = np.zeros_like(self.theta)
-                value_fcn = 0.
-                mean_value = 0.
-
-                #monte carlo
-                # backwards, for every step in the episode
-                for idx in range(len(episode),0,-1):
-                    (state, action, reward) = episode[idx-1]
-                    value_fcn = reward + self.gamma*value_fcn
-
-                    # incrementally calculate theta update
-                    Vest = self.get_tile_feature(state).dot(self.v)
-                    if idx%1000==0:
-                        print(Vest, end=" ")
-                    #Vest = -100
-                    theta_update += self.score_function(state,action)*(value_fcn - Vest)
-
-
-                self.theta += self.alpha*theta_update*self.gradient_sign
-
+                self.eligibility_vector_theta = self.eligibility_vector_theta*self.lambda_ + self.score_function(state,action)
+                self.theta += self.alpha*self.eligibility_vector_theta*delta_t
 
 
 
@@ -615,4 +552,4 @@ class mountain_car():
 #print('grad theorm score:',car1.score_function(state,action))
 #print('numeric score:',car1.numerical_score_function(state,action))
 
-#car1.train(iter=100)
+#car1.train(iter=1000)
