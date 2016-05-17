@@ -13,8 +13,9 @@ class mountain_car():
 
     def __init__(self,
                  gamma=0.99,
-                 init_alpha=1e-2,
+                 init_alpha=1e-4,
                  constant_alpha=False,
+
                  type_features=2,
                  init_epsilon=1.0,
                  update_epsilon=True,
@@ -23,7 +24,7 @@ class mountain_car():
                  random_init_theta=False,
                  negative_gradient = False,
                  environment = 'MountainCar-v0',
-                 tile_features = False):
+                 ):
 
         if negative_gradient:
             self.baseline_enable = 0
@@ -64,12 +65,13 @@ class mountain_car():
             self.num_features = 5
 
         #tile features:
-        self.tile_resolution = 5
+        self.tile_resolution = 10
         self.num_tile_features = pow(self.tile_resolution,self.statedim)*2
 
         #for the value function estimation:
         self.v = np.zeros(self.num_tile_features)
-        self.lambda_ = 0
+        self.eligibility_vector = np.zeros(self.num_tile_features)
+        self.lambda_ = 0.99
 
         if random_init_theta:
             # random initialization
@@ -93,7 +95,9 @@ class mountain_car():
 
         self.N_0 = N_0
 
-        np.seterr(all='raise')
+        print('N_0',self.N_0)
+        print('init alpha',self.init_alpha)
+        print('Constant Alpha', constant_alpha)
 
 
     def get_features(self, state, normalize=True):
@@ -175,8 +179,9 @@ class mountain_car():
     # TODO: better solution to over-/underflows? Maybe not needed if proper learning?
     def eval_action_softmax_probabilities(self, state):
 
-                #softmax probability
+        #softmax probability
         activation = self.get_features(state).dot(self.theta)
+        activation-= np.max(activation)
 
         # trying to workaround over and underflows
         solved = False
@@ -213,7 +218,7 @@ class mountain_car():
             # print('explore')
             return self.env.action_space.sample()
 
-    def run_episode(self, enable_render=False, limit=1000000):
+    def run_episode(self, enable_render=False, limit=100000):
         episode = []
         state = self.env.reset()
 
@@ -221,7 +226,8 @@ class mountain_car():
         done = False
         while ( not done ):
 
-            if len(episode)>limit: break
+            if len(episode)>limit:
+                return []
 
             count += 1
 
@@ -277,13 +283,14 @@ class mountain_car():
         # fig = plt.figure()
 
         for it in range(iter):
+            print(it, end=" ")
             # run episode
             episode = self.run_episode(enable_render=False)
             self.total_runs += 1.0
             # keep track of training episode lengths
             self.episode_lengths.append(len(episode))
 
-            if (it+1)%10 == 0:
+            if (it+1)%1 == 0:
                 # output training info
                 print("EPISODE #{}".format(self.total_runs))
                 print("with a exploration of {}%".format(self.epsilon*100))
@@ -304,61 +311,57 @@ class mountain_car():
                 self.epsilon = save_epsilon
 
             #offline td-lambda for estimating the value function
-            previous_state = (-0.5,0.) #initialize with some start state
-            eligibiltiy_vector = np.zeros(self.num_tile_features)
-            for idx in range(len(episode)):
+            if not(len(episode)==0):
+                (state, action, reward) = episode[0]
+            previous_state = state #initialize with the start state
+            self.eligibiltiy_vector = np.zeros(self.num_tile_features)
+            for idx in range(1,len(episode)):
                 (state, action, reward) = episode[idx]
                 Vs = self.get_tile_feature(previous_state).dot(self.v)
                 Vs_prime = self.get_tile_feature(state).dot(self.v)
 
                 delta_t = reward + self.gamma*Vs_prime - Vs
 
-                eligibiltiy_vector = eligibiltiy_vector*self.gamma*self.lambda_ + self.get_tile_feature(state)
+                self.eligibiltiy_vector = self.eligibiltiy_vector*self.gamma*self.lambda_ + self.get_tile_feature(state)
                 # print('eligibiltiy_vector', eligibiltiy_vector)
                 # print('delta_t', delta_t)
                 # print('Vs',Vs)
                 # print('Vs_prime',Vs_prime)
                 # print('v',self.v)
-                self.v += self.alpha*delta_t*eligibiltiy_vector
+                self.v += 1e-3*delta_t*self.eligibiltiy_vector
                 previous_state = state
 
             # theta += alpha*calculate_gradient()
             # Version reversed (equivalent if only updated at the end)
-            theta_update = 0.
+            theta_update = np.zeros_like(self.theta)
             value_fcn = 0.
             mean_value = 0.
-            # if it is the first run
-            if self.total_runs < 1.1:
-                # get a first estimation of the average mean
-                for state, action, reward in episode:
-                    value_fcn = reward + self.gamma*value_fcn
-                    mean_value += value_fcn / len(episode)
-                self.mean_value_fcn += (mean_value - self.mean_value_fcn) / self.total_runs
 
+            #monte carlo
             # backwards, for every step in the episode
             for idx in range(len(episode),0,-1):
                 (state, action, reward) = episode[idx-1]
                 value_fcn = reward + self.gamma*value_fcn
 
                 # incrementally calculate theta update
-                theta_update += self.score_function(state,action)*(value_fcn - self.mean_value_fcn*self.baseline_enable)
-                # mean value function
-                mean_value += value_fcn / len(episode)
-                # TODO: check sign in this line. HAS IT TO BE -. WHY??
-            # update theta
+                Vest = self.get_tile_feature(state).dot(self.v)
+                if idx%1000==0:
+                    print(Vest, end=" ")
+                Vest = -100
+                theta_update += self.score_function(state,action)*(value_fcn - Vest)
+
+
             self.theta += self.alpha*theta_update*self.gradient_sign
-            # update mean value function
-                # if it is not the first run
-            if self.total_runs > 1.1:
-                self.mean_value_fcn += (mean_value - self.mean_value_fcn) / self.total_runs
 
 
 
-            if (it+1)%10 == 0:
+            if (it+1)%1 == 0:
                 print("theta")
                 print(self.theta)
                 self.plot_policy(mode= 'stochastic')
-                #self.plot_value_function()
+                self.plot_policy(mode= 'deterministic')
+                self.plot_eligibility()
+                self.plot_value_function()
 
             if (it+1)%100 == 0:
                 self.plot_training()
@@ -376,7 +379,32 @@ class mountain_car():
                 self.savedata(dataname=dataname)
 
 
-        return self.theta#
+        return self.theta
+
+    def plot_eligibility(self):
+
+        e_vector = self.eligibiltiy_vector[0:self.num_tile_features/2]  #just visualize first half
+        print('plotting the eligibility traces')
+
+        obs_low = self.env.observation_space.low
+        obs_high = self.env.observation_space.high
+
+        # values to evaluate policy at
+        x_range = np.linspace(obs_low[0], obs_high[0], self.tile_resolution)
+        v_range = np.linspace(obs_low[1], obs_high[1], self.tile_resolution)
+
+        # get actions in a grid
+        e_mat = e_vector.reshape((self.tile_resolution,self.tile_resolution))
+
+        fig = plt.figure()
+
+        ax = fig.add_subplot(111, projection='3d')
+        X, Y = np.meshgrid(x_range, v_range)
+        ax.plot_wireframe(X,Y, e_mat)
+        ax.set_xlabel("x")
+        ax.set_ylabel("v")
+        ax.set_zlabel("eligibility")
+        plt.show()
 
     def plot_value_function(self):
 
@@ -394,7 +422,7 @@ class mountain_car():
         for i, state1 in enumerate(x_range):
             for j, state2 in enumerate(v_range):
                 # print(np.argmax(self.get_features((x,v)).dot(self.theta)), end="")
-                value_func[i,j] = self.v.dot(self.get_tile_feature((state1,state2)))
+                value_func[i,j] = -self.v.dot(self.get_tile_feature((state1,state2)))
         print("")
 
 
@@ -405,7 +433,8 @@ class mountain_car():
         ax.plot_wireframe(X,Y, value_func)
         ax.set_xlabel("x")
         ax.set_ylabel("v")
-        ax.set_zlabel("value")
+        ax.set_zlabel("negative value")
+        plt.show()
 
 
     def savedata(self, dataname):
