@@ -85,7 +85,7 @@ def policy(state):
     else:
         return np.random.choice([1,0])
 
-numiter = 10 #00000
+numiter = 100 #00000
 
 
 error_lists = []
