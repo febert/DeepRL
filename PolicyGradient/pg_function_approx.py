@@ -310,6 +310,10 @@ class mountain_car():
                 self.policy_mode = save_policy_mode
                 self.epsilon = save_epsilon
 
+            tile_features_mat = np.zeros((len(episode), self.num_tile_features))
+            for idx in range(len(episode)):
+                tile_features_mat[idx,:] = self.get_tile_feature(episode[idx][0])
+
             #offline td-lambda for estimating the value function
             if not(len(episode)==0):
                 (state, action, reward) = episode[0]
@@ -317,12 +321,12 @@ class mountain_car():
             self.eligibiltiy_vector = np.zeros(self.num_tile_features)
             for idx in range(1,len(episode)):
                 (state, action, reward) = episode[idx]
-                Vs = self.get_tile_feature(previous_state).dot(self.v)
-                Vs_prime = self.get_tile_feature(state).dot(self.v)
+                Vs = tile_features_mat[idx-1].dot(self.v)
+                Vs_prime = tile_features_mat[idx].dot(self.v)
 
                 delta_t = reward + self.gamma*Vs_prime - Vs
 
-                self.eligibiltiy_vector = self.eligibiltiy_vector*self.gamma*self.lambda_ + self.get_tile_feature(state)
+                self.eligibiltiy_vector = self.eligibiltiy_vector*self.gamma*self.lambda_ + tile_features_mat[idx]
                 # print('eligibiltiy_vector', eligibiltiy_vector)
                 # print('delta_t', delta_t)
                 # print('Vs',Vs)
@@ -337,6 +341,8 @@ class mountain_car():
             value_fcn = 0.
             mean_value = 0.
 
+            Vest_episode = tile_features_mat.dot(self.v)
+
             #monte carlo
             # backwards, for every step in the episode
             for idx in range(len(episode),0,-1):
@@ -344,10 +350,10 @@ class mountain_car():
                 value_fcn = reward + self.gamma*value_fcn
 
                 # incrementally calculate theta update
-                Vest = self.get_tile_feature(state).dot(self.v)
+                Vest = Vest_episode[idx-1]
                 if idx%1000==0:
                     print(Vest, end=" ")
-                Vest = -100
+                # Vest = -100
                 theta_update += self.score_function(state,action)*(value_fcn - Vest)
 
 
