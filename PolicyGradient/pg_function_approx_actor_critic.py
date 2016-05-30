@@ -35,7 +35,6 @@ class mountain_car():
             self.baseline_enable = 1
             self.gradient_sign = 1
 
-
         self.env = gym.make(environment)
         self.num_actions = self.env.action_space.n
         self.statedim = self.env.observation_space.shape[0]
@@ -70,7 +69,7 @@ class mountain_car():
 
         if random_init_theta:
             # random initialization
-            self.theta = np.random.randn(self.num_tile_features * self.num_actions)
+            self.theta = np.random.randn(self.num_tile_features * self.num_actions)*0.1
         else:
             # zero initialization
             self.theta = np.zeros(self.num_tile_features * self.num_actions)
@@ -111,7 +110,7 @@ class mountain_car():
         ind[ind>=self.tile_resolution]=self.tile_resolution-1  #bound the index so that it doesn't exceed bounds
         ind = tuple(ind)
 
-        ind_shift = np.floor((state-low-stepsize/2)/stepsize).astype(int)
+        ind_shift = np.floor((state-low+stepsize/2)/stepsize).astype(int)
         ind_shift[ind_shift>=self.tile_resolution]=self.tile_resolution-1  #bound the index so that it doesn't exceed bounds
         ind_shift = tuple(ind_shift)
 
@@ -273,12 +272,16 @@ class mountain_car():
 
                 self.policy_mode = "deterministic"
                 self.epsilon = 0.
-                det_episode = self.run_episode(limit=10000)
+                limit = 10000
+                det_episode = self.run_episode(limit=limit)
+                if det_episode == []:
+                    len_episode = limit
+                else:
+                    len_episode = len(det_episode)
 
-                self.test_lengths.append(len(det_episode))
+                self.test_lengths.append(len_episode)
                 self.policy_mode = save_policy_mode
                 self.epsilon = save_epsilon
-
 
             tile_features_mat = np.zeros((len(episode), self.num_tile_features))
             for idx in range(len(episode)):
@@ -288,6 +291,7 @@ class mountain_car():
             if not(len(episode)==0):
                 (state, action, reward) = episode[0]
             self.eligibiltiy_vector = np.zeros(self.num_tile_features)
+            self.eligibility_vector_theta = np.zeros(self.num_tile_features*self.num_actions)
             for idx in range(1,len(episode)):
                 (state, action, reward) = episode[idx]
                 Vs = tile_features_mat[idx-1].dot(self.v)
@@ -305,6 +309,7 @@ class mountain_car():
 
 
             if (it+1)%1 == 0:
+
                 print("theta")
                 print(self.theta)
                 self.plot_policy(mode= 'stochastic')
@@ -393,6 +398,7 @@ class mountain_car():
         cPickle.dump(self.episode_lengths, output)
 
         cPickle.dump(self.test_lengths, output)
+        cPickle.dump(self.v,output)
         output.close()
 
     def loaddata(self, dataname):
@@ -401,6 +407,7 @@ class mountain_car():
         self.theta = cPickle.load(pkl_file)
         self.episode_lengths = cPickle.load(pkl_file)
         self.test_lengths = cPickle.load(pkl_file)
+        self.v = cPickle.load(pkl_file)
 
         print( self.theta)
         print( self.episode_lengths)
