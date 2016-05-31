@@ -38,3 +38,14 @@ Host host01
 		 export PATH=/usr/local/cuda-7.5/bin:$PATH
 		 export LD_LIBRARY_PATH=~/cuda/lib64:$LD_LIBRARY_PATH
 
+
+# How to get remote access to Jupyter notebook and Tensorboard
+	* get them launched in the host
+		jupyter-notebook --no-browser
+		tensorboard --logdir=./wherever/your/data/is
+	* tunnel locally to them
+		# jupyter
+		ssh -NL <local_port>:localhost:8888 host01
+		# tensorboard
+		ssh -NL <other_local_port>:0.0.0.0:6006
+	* access through your browser with localhost:<local_port> and localhost:<other_local_port>
