@@ -43,7 +43,7 @@ Host host01
 	* get them launched in the host
 		jupyter-notebook --no-browser
 		tensorboard --logdir=./wherever/your/data/is
-	* tunnel locally to them
+	* tunnel from the client
 		# jupyter
 		ssh -NL <local_port>:localhost:8888 host01
 		# tensorboard
