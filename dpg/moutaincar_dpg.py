@@ -19,16 +19,18 @@ class mountaincar_dpg():
                  gamma=0.99,
                  N_0=50.,
                  random_init_theta=False,
-                 environment = 'MountainCar-v0',
+                 environment = 'MountainCarContinuous-v0',
                  algorithm = 'dpg1'
                  ):
+
+        self.epsilon = 0.1
 
         self.algorithm = algorithm
         self.env = gym.make(environment)
         self.select_env = environment
 
-        self.num_actions = self.env.action_space.n
-        self.prob_distrib = np.zeros(self.num_actions)
+#        self.num_actions = self.env.action_space.n
+#        self.prob_distrib = np.zeros(self.num_actions)
         self.statedim = self.env.observation_space.shape[0]
 
 
@@ -110,7 +112,7 @@ class mountaincar_dpg():
         high = self.env.observation_space.high
         obs_dim = self.env.observation_space.shape[0]   #dimension of observation space
         low = np.asarray(self.env.observation_space.low)
-        numactions = self.env.action_space.n
+#        numactions = self.env.action_space.n
 
 
         stepsize = (high - low)/self.tile_resolution
@@ -207,15 +209,15 @@ class mountaincar_dpg():
                 # output training info
                 print("EPISODE #{}".format(it))
                 print("with a exploration of {}%".format(self.epsilon*100))
-                print("and learning rate of {}".format(self.alpha))
+#                print("and learning rate of {}".format(self.alpha))
                 print("lasted {0} steps".format(len(episode)))
 
                 # do a test run
-                save_policy_mode = self.policy_mode
+                # save_policy_mode = self.policy_mode
                 save_epsilon = self.epsilon
                 # print(self.policy_mode)
 
-                self.policy_mode = "deterministic"
+                # self.policy_mode = "deterministic"
                 self.epsilon = 0.
                 limit = 10000
                 det_episode = self.run_episode(limit=limit)
@@ -225,7 +227,7 @@ class mountaincar_dpg():
                     len_episode = len(det_episode)
 
                 self.test_lengths.append(len_episode)
-                self.policy_mode = save_policy_mode
+                # self.policy_mode = save_policy_mode
                 self.epsilon = save_epsilon
 
 
@@ -435,6 +437,3 @@ class mountaincar_dpg():
         plt.plot(self.test_lengths)
         plt.yscale('log')
         plt.show()
-
-
-
