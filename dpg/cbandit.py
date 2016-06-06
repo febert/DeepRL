@@ -19,7 +19,7 @@ class cbandit():
 
     def __init__(self,):
 
-        self.n = 100 #number of parameters, in this case equal number of actions m
+        self.n = 10 #number of parameters, in this case equal number of actions m
 
         self.theta = np.zeros(self.n)
 
@@ -33,7 +33,7 @@ class cbandit():
 
         self.gamma = 1
 
-        self.alpha_theta = 1e-3
+        self.alpha_theta = 1e-4
         self.alpha_w = 1e-2
         self.alpha_v = 1e-2
 
@@ -100,7 +100,7 @@ class cbandit():
 np.meshgrid()
 c1 = cbandit()
 
-c1.train(nsteps=20000)
+c1.train(nsteps=40000)
 
 
 c1.plot_training()

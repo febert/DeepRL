@@ -23,11 +23,12 @@ class mountaincar_dpg():
                  algorithm = 'dpg1'
                  ):
 
-        self.epsilon = 0.1
-
         self.algorithm = algorithm
         self.env = gym.make(environment)
         self.select_env = environment
+
+        self.action_limits = (self.env.action_space.low, self.env.action_space.high)
+        print('action limits', self.action_limits)
 
 #        self.num_actions = self.env.action_space.n
 #        self.prob_distrib = np.zeros(self.num_actions)
@@ -36,20 +37,12 @@ class mountaincar_dpg():
 
         # lengths of all the played episodes
         self.episode_lengths = []
-
-        # running average of the mean value of the episodes' steps
-        self.mean_value_fcn = 0.0
-
-        # lengths of all the tested episodes TODO
+        # lengths of episodes run with target policy
         self.test_lengths = []
 
-        ## policy parameters initialization
-
-        #tile features
+        #tile parameteres
         self.tile_resolution = 10.0
-
-        self.overlap = True
-
+        self.overlap = False
         if self.overlap:
             self.num_tile_features = int(pow(self.tile_resolution,self.statedim)*2)
         else:
@@ -64,36 +57,44 @@ class mountaincar_dpg():
 
         if random_init_theta:
             # random initialization
-            self.theta = np.random.randn(self.num_tile_features)*0.001
+            self.theta = np.ones(self.num_tile_features) + np.random.randn(self.num_tile_features)*0.1
         else:
-            # zero initialization
-            self.theta = np.zeros(self.num_tile_features)
+            # initialization with "no" actions (corresponds to action = 1)
+            self.theta = np.ones(self.num_tile_features)
 
         # for the value function estimation:
         self.v = np.zeros(self.num_tile_features)  # weights for value function estimator
 
         self.w = np.zeros(self.num_tile_features)  # weights for q-function estimator
 
-        self.gamma = 0.9
-
-        self.sigma_b = 1e-1   #standard deviation for behavior policy
+        self.sigma_b = 1   #standard deviation for behavior policy
 
         self.alpha_theta = 1e-3
         self.alpha_w = 1e-2
         self.alpha_v = 1e-2
 
-
         print('N_0',self.N_0)
         print('using environment',environment)
         print('tile resolution',self.tile_resolution)
+        print('gamma',self.gamma)
 
     def beta(self,state):
         # behavior policy
-         return np.random.randn(1)*self.sigma_b + self.mu(state)
+        beta_out = np.random.randn(1)*self.sigma_b + self.mu(state)
+
+        return beta_out
 
     def mu(self, state):
         # target policy
-          return self.theta.dot(self.get_tile_feature(state))
+
+        try:
+            m_out = self.theta.dot(self.get_tile_feature(state))
+        except TypeError:
+            print('theta', self.theta)
+            print('getting tile for state: ', state)
+            print('self.get_tile_feature(state)', self.get_tile_feature(state))
+
+        return m_out
 
     def V(self,state):
         return self.v.dot(self.get_tile_feature(state))
@@ -105,15 +106,11 @@ class mountaincar_dpg():
         # calc Qfunction
         return (action- self.mu(state))*self.nabla_mu(state).dot(self.w) + self.V(state)
 
-
-
     def get_tile_feature(self, state):
 
-        high = self.env.observation_space.high
+        high = np.asarray(self.env.observation_space.high)
         obs_dim = self.env.observation_space.shape[0]   #dimension of observation space
         low = np.asarray(self.env.observation_space.low)
-#        numactions = self.env.action_space.n
-
 
         stepsize = (high - low)/self.tile_resolution
 
@@ -122,14 +119,24 @@ class mountaincar_dpg():
 
         ind[ind>=self.tile_resolution]=self.tile_resolution-1  #bound the index so that it doesn't exceed bounds
         ind = tuple(ind)
+        # print("ind", ind)
+        # print('size stepsize', stepsize.shape)
+        # print('stepsize', stepsize)
+        # print("state", state)
+        # print("state size", state.shape)
+        # print("high", high)
+        # print("low", low)
 
         grid = np.zeros(np.ones(obs_dim)*self.tile_resolution)
         try:
             grid[ind] = 1
         except IndexError, error:
             print(error)
+            print('stepsize', stepsize)
+            print('size stepsize', stepsize.shape)
             print("ind", ind)
             print("state", state)
+            print("state size", state.shape)
             print("high", high)
             print("low", low)
 
@@ -150,52 +157,104 @@ class mountaincar_dpg():
         else:
             flatgrid = grid.flatten()
 
-
         return flatgrid
 
 
+    def apply_limits(self,action):
 
-    def run_episode(self, enable_render=False, limit=5000):
+        if action < self.action_limits[0]:
+            action = self.action_limits[0]
+
+        if action > self.action_limits[1]:
+            action = self.action_limits[1]
+
+        return action
+
+
+    def run_episode(self, enable_render=False, limit=20000):
+
         episode = []
         state = self.env.reset()
-        print('size state 0', state.shape)
 
         count = 0
         done = False
-        #while ( not done ):
-
-        if len(episode)>limit:
-            return []
-
-        count += 1
-
-        action = self.beta(state)
-
-        state_prime, reward, done, info = self.env.step(action)
-        state_prime = np.squeeze(state_prime)
-
-        delta_t = reward + self.gamma * self.Qw(state_prime, self.mu(state_prime)) - self.Qw(state,action)
-
-        self.theta += self.alpha_theta * self.nabla_mu(state)*self.nabla_mu(state).dot(self.w)
 
 
-        self.w += self.alpha_w *delta_t*(action - self.mu(state))*self.nabla_mu(state)
 
-        self.v += self.alpha_v *delta_t* self.get_tile_feature(state)
+        while ( not done ):
 
-        state = state_prime
+            if len(episode)>limit:
+                return episode
 
-        episode.append((state, action, reward))
-        if enable_render: self.env.render()
-        # if count > self.max_episode_length: break;
+            count += 1
 
-        if enable_render: print("This episode took {} steps".format(count))
+            action = self.beta(state)
+            action = self.apply_limits(action)
+
+            state_prime, reward, done, info = self.env.step(action)
+            state_prime = np.squeeze(state_prime)
+
+            delta_t = reward + self.gamma * self.Qw(state_prime, self.mu(state_prime)) - self.Qw(state,action)
+
+            self.theta += self.alpha_theta * self.nabla_mu(state)*self.nabla_mu(state).dot(self.w)
+
+            self.w += self.alpha_w *delta_t*(action - self.mu(state))*self.nabla_mu(state)
+
+            self.v += self.alpha_v *delta_t* self.get_tile_feature(state)
+
+            state = state_prime
+
+            episode.append((state, action, reward))
+
+
+            if (count)%10000 == 0:
+                print(" Intermediate Plot at step no. {}".format(count))
+
+                print("theta")
+                print(self.theta)
+                print('last v', self.v)
+                print("beta: ")
+                self.plot_policy(mode= 'stochastic')
+                print("mu: ")
+                self.plot_policy(mode= 'deterministic')
+                self.plot_value_function()
+
+            if enable_render:
+                self.env.render()
+                # print("step no. {}".format(count))
+
+        return episode
+
+    def run_target_episode(self, enable_render=False, limit=5000):
+
+        episode = []
+        state = self.env.reset()
+
+        count = 0
+        done = False
+
+        while ( not done ):
+
+            if len(episode)>limit:
+                return episode
+
+            count += 1
+            state = np.squeeze(state)  # convert (2,1) array in to (2,)
+            action = self.mu(state)
+            action = self.apply_limits(action)
+            # print('action',action)
+
+            state, reward, done, info = self.env.step(action)
+
+            episode.append((state, action, reward))
+
+            if enable_render:
+                self.env.render()
 
         return episode
 
 
-
-    def start_training(self, max_episodes=1000, dataname ='unnamed_data', save = False):
+    def start_training(self, max_episodes=100, dataname ='unnamed_data', save = False):
         # fig = plt.figure()
 
         for it in range(max_episodes):
@@ -205,30 +264,25 @@ class mountaincar_dpg():
 
             self.episode_lengths.append(len(episode))
 
+            # perform a test run with the target policy:
+            self.test_lengths.append(len(self.run_target_episode(enable_render=False)))
+
             if (it+1)%1 == 0:
                 # output training info
-                print("EPISODE #{}".format(it))
-                print("with a exploration of {}%".format(self.epsilon*100))
+                print("Finished run #{}".format(it + 1))
+                print("with a sigma exploration of  {}".format(self.sigma_b))
 #                print("and learning rate of {}".format(self.alpha))
                 print("lasted {0} steps".format(len(episode)))
 
-                # do a test run
-                # save_policy_mode = self.policy_mode
-                save_epsilon = self.epsilon
-                # print(self.policy_mode)
 
-                # self.policy_mode = "deterministic"
-                self.epsilon = 0.
-                limit = 10000
-                det_episode = self.run_episode(limit=limit)
-                if det_episode == []:
-                    len_episode = limit
-                else:
-                    len_episode = len(det_episode)
-
-                self.test_lengths.append(len_episode)
-                # self.policy_mode = save_policy_mode
-                self.epsilon = save_epsilon
+                print("theta")
+                print(self.theta)
+                print('last v', self.v)
+                print("beta: ")
+                self.plot_policy(mode= 'stochastic')
+                print("mu: ")
+                self.plot_policy(mode= 'deterministic')
+                self.plot_value_function()
 
 
 
@@ -236,16 +290,6 @@ class mountaincar_dpg():
             print('max theta', self.theta.max())
             print('min theta', self.theta.min())
 
-            if (it+1)%1 == 0:
-
-                if self.select_env == 'MountainCar-v0':
-
-                    print("theta")
-                    print(self.theta)
-                    print('last v', self.v)
-                    self.plot_policy(mode= 'stochastic')
-                    self.plot_policy(mode= 'deterministic')
-                    self.plot_value_function()
 
             if (it+1)%10 == 0:
                 self.plot_training()
@@ -380,11 +424,9 @@ class mountaincar_dpg():
         pkl_file.close()
 
 
-    def plot_policy(self, resolution=100, mode= 'stochastic'):
+    def plot_policy(self, mode= 'stochastic'):
 
-        # backup of value
-        save_epsilon = self.epsilon
-        self.epsilon = 0.0      # no exploration
+        resolution = self.tile_resolution*2
 
         obs_low = self.env.observation_space.low
         obs_high = self.env.observation_space.high
@@ -394,30 +436,25 @@ class mountaincar_dpg():
         v_range = np.linspace(obs_low[1], obs_high[1], resolution)
 
         # get actions in a grid
-        greedy_policy = np.zeros((resolution, resolution))
+        policy_vals = np.zeros((resolution, resolution))
         for i, x in enumerate(x_range):
             for j, v in enumerate(v_range):
-                # print(np.argmax(self.get_features((x,v)).dot(self.theta)), end="")
-                if mode == 'stocastic':
-                    greedy_policy[i,j] = self.mu((x,v))
+                if mode == 'stochastic':
+                    policy_vals[i,j] = self.beta((x,v))
                 elif mode == 'deterministic':
-                    greedy_policy[i, j] = self.beta((x, v))
+                    policy_vals[i,j] = self.mu((x,v))
 
-        print("")
+        # print("policy values:", policy_vals)
 
-        # plot policy
         fig = plt.figure()
-        plt.imshow(greedy_policy,
-                   cmap=plt.get_cmap('gray'),
-                   interpolation='none',
-                   extent=[obs_low[1],obs_high[1],obs_high[0],obs_low[0]],
-                   aspect="auto")
-        plt.xlabel("velocity")
-        plt.ylabel("position")
-        plt.show()
 
-        # restore value
-        self.epsilon = save_epsilon
+        ax = fig.add_subplot(111, projection='3d')
+        X, Y = np.meshgrid(x_range, v_range)
+        ax.plot_surface(X, Y, policy_vals, rstride=1, cstride=1, cmap=cm.jet, linewidth=0.1, antialiased=True)
+        ax.set_xlabel("x")
+        ax.set_ylabel("v")
+        ax.set_zlabel("action")
+        plt.show()
 
 
     def plot_training(self):
@@ -425,10 +462,11 @@ class mountaincar_dpg():
         fig = plt.figure()
         plt.plot(self.episode_lengths)
         plt.yscale('log')
-        plt.show()
+
         plt.xlabel("episodes")
         plt.ylabel("timesteps")
 
+        plt.show()
 
 
     def plot_testing(self):
@@ -436,4 +474,16 @@ class mountaincar_dpg():
         fig = plt.figure()
         plt.plot(self.test_lengths)
         plt.yscale('log')
+
+        plt.xlabel("episodes")
+        plt.ylabel("timesteps")
+
         plt.show()
+
+
+
+
+
+# car1 = mountaincar_dpg()
+#
+# car1.start_training()
