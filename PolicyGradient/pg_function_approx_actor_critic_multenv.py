@@ -68,9 +68,13 @@ class mountain_car():
             self.num_tile_features = pow(self.tile_resolution,self.statedim)
 
         #for the value function estimation:
+	# v parametrizes a value for each state
         self.v = np.zeros(self.num_tile_features)  # weights for value function estimator
 
 
+	# w parametrizes a value for every action for each state
+	# It is a single row, but is divided into as many sections as actions there are
+	# Each of these sections gets multiplied by a different section of the features array
         self.eligibility_vector_theta = np.zeros(self.num_tile_features*self.num_actions)
         self.w = np.zeros(self.num_tile_features*self.num_actions) #weights for q-function estimator
 
@@ -151,6 +155,10 @@ class mountain_car():
         return  flatgrid
 
     def get_full_feature(self,state):
+	"""
+	Returns a matrix containing as many rows as actions.
+	Each row contains the same state features at different positions (corresponding to the different actions)
+	"""
 
         flatgrid = self.get_tile_feature(state)
         length_flatgrid = flatgrid.shape[0]
@@ -310,6 +318,8 @@ class mountain_car():
                 if not(len(episode)==0):
                     (state, action, reward) = episode[0]
                 self.eligibiltiy_vector = np.zeros(self.num_tile_features)
+                self.eligibility_vector_theta = np.zeros(self.num_tile_features*self.num_actions)
+
                 for idx in range(1,len(episode)):
                     (state, action, reward) = episode[idx]
                     Vs = tile_features_mat[idx-1].dot(self.v)
