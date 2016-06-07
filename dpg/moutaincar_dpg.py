@@ -20,7 +20,7 @@ class mountaincar_dpg():
                  N_0=50.,
                  random_init_theta=False,
                  environment = 'MountainCarContinuous-v0',
-                 algorithm = 'dpg1'
+                 algorithm = 'dpg1',
                  ):
 
         self.algorithm = algorithm
@@ -29,6 +29,7 @@ class mountaincar_dpg():
 
         self.action_limits = (self.env.action_space.low, self.env.action_space.high)
         print('action limits', self.action_limits)
+        actionmean = (self.action_limits[0]+ self.action_limits[1])/2
 
 #        self.num_actions = self.env.action_space.n
 #        self.prob_distrib = np.zeros(self.num_actions)
@@ -55,12 +56,13 @@ class mountaincar_dpg():
 
         ######################### dpg params ###############
 
+
         if random_init_theta:
             # random initialization
-            self.theta = np.ones(self.num_tile_features) + np.random.randn(self.num_tile_features)*0.1
+            self.theta = np.ones(self.num_tile_features)*actionmean + np.random.randn(self.num_tile_features)*0.1
         else:
             # initialization with "no" actions (corresponds to action = 1)
-            self.theta = np.ones(self.num_tile_features)
+            self.theta = np.ones(self.num_tile_features)*actionmean
 
         # for the value function estimation:
         self.v = np.zeros(self.num_tile_features)  # weights for value function estimator
@@ -104,12 +106,12 @@ class mountaincar_dpg():
 
     def Qw(self,state,action):
         # calc Qfunction
-        return (action- self.mu(state))*self.nabla_mu(state).dot(self.w) + self.V(state)
+        return (action- self.mu(state))*self.nabla_mu(state).dot(self.w)  + self.V(state)
 
     def get_tile_feature(self, state):
 
         high = np.asarray(self.env.observation_space.high)
-        obs_dim = self.env.observation_space.shape[0]   #dimension of observation space
+        obs_dim = self.env.observation_space.shape[0]       #dimension of observation space
         low = np.asarray(self.env.observation_space.low)
 
         stepsize = (high - low)/self.tile_resolution
@@ -119,13 +121,7 @@ class mountaincar_dpg():
 
         ind[ind>=self.tile_resolution]=self.tile_resolution-1  #bound the index so that it doesn't exceed bounds
         ind = tuple(ind)
-        # print("ind", ind)
-        # print('size stepsize', stepsize.shape)
-        # print('stepsize', stepsize)
-        # print("state", state)
-        # print("state size", state.shape)
-        # print("high", high)
-        # print("low", low)
+
 
         grid = np.zeros(np.ones(obs_dim)*self.tile_resolution)
         try:
@@ -210,14 +206,15 @@ class mountaincar_dpg():
             if (count)%10000 == 0:
                 print(" Intermediate Plot at step no. {}".format(count))
 
-                print("theta")
-                print(self.theta)
-                print('last v', self.v)
-                print("beta: ")
-                self.plot_policy(mode= 'stochastic')
-                print("mu: ")
-                self.plot_policy(mode= 'deterministic')
-                self.plot_value_function()
+                if self.select_env == 'MountainCarContinuous-v0':
+                    print("theta")
+                    print(self.theta)
+                    print('last v', self.v)
+                    print("beta: ")
+                    self.plot_policy(mode= 'stochastic')
+                    print("mu: ")
+                    self.plot_policy(mode= 'deterministic')
+                    self.plot_value_function()
 
             if enable_render:
                 self.env.render()
@@ -254,13 +251,13 @@ class mountaincar_dpg():
         return episode
 
 
-    def start_training(self, max_episodes=100, dataname ='unnamed_data', save = False):
+    def start_training(self, max_episodes=100, dataname ='unnamed_data', save = False, max_episode_length = 20000):
         # fig = plt.figure()
 
         for it in range(max_episodes):
 
             # run episode
-            episode = self.run_episode(enable_render=False)
+            episode = self.run_episode(enable_render=False, limit= max_episode_length)
 
             self.episode_lengths.append(len(episode))
 
@@ -274,15 +271,15 @@ class mountaincar_dpg():
 #                print("and learning rate of {}".format(self.alpha))
                 print("lasted {0} steps".format(len(episode)))
 
-
-                print("theta")
-                print(self.theta)
-                print('last v', self.v)
-                print("beta: ")
-                self.plot_policy(mode= 'stochastic')
-                print("mu: ")
-                self.plot_policy(mode= 'deterministic')
-                self.plot_value_function()
+                if self.select_env == 'MountainCarContinuous-v0':
+                    print("theta")
+                    print(self.theta)
+                    print('last v', self.v)
+                    print("beta: ")
+                    self.plot_policy(mode= 'stochastic')
+                    print("mu: ")
+                    self.plot_policy(mode= 'deterministic')
+                    self.plot_value_function()
 
 
 
@@ -307,65 +304,6 @@ class mountaincar_dpg():
 
         return self.theta
 
-    def plot_eligibility(self):
-
-        if self.overlap:
-            e_vector = self.eligibiltiy_vector[0:self.num_tile_features/2]  #just visualize first half
-        else:
-            e_vector = np.array(self.eligibiltiy_vector)
-
-        print('plotting the eligibility traces')
-
-        obs_low = self.env.observation_space.low
-        obs_high = self.env.observation_space.high
-
-        # values to evaluate policy at
-        x_range = np.linspace(obs_low[0], obs_high[0], self.tile_resolution)
-        v_range = np.linspace(obs_low[1], obs_high[1], self.tile_resolution)
-
-        # get actions in a grid
-        print(e_vector.shape)
-        e_mat = e_vector.reshape((self.tile_resolution,self.tile_resolution))
-
-        fig = plt.figure()
-
-        ax = fig.add_subplot(111, projection='3d')
-        X, Y = np.meshgrid(x_range, v_range)
-        ax.plot_wireframe(X,Y, e_mat)
-        ax.set_xlabel("x")
-        ax.set_ylabel("v")
-        ax.set_zlabel("eligibility")
-        plt.show()
-
-    def plot_q_function(self):
-
-        for action in range(self.num_actions):
-            print('plotting the q-function for action {}'.format(action))
-
-            obs_low = self.env.observation_space.low
-            obs_high = self.env.observation_space.high
-
-            # values to evaluate policy at
-            x_range = np.linspace(obs_low[0], obs_high[0]-0.01, self.tile_resolution*3)
-            v_range = np.linspace(obs_low[1], obs_high[1]-0.01, self.tile_resolution*3)
-
-            # get actions in a grid
-            q_func = np.zeros((x_range.shape[0], v_range.shape[0]))
-            for i, state1 in enumerate(x_range):
-                for j, state2 in enumerate(v_range):
-                    # print(np.argmax(self.get_features((x,v)).dot(self.theta)), end="")
-                    q_func[i,j] = -self.w.dot(self.get_full_feature((state1,state2))[action])
-            print("")
-
-            fig = plt.figure()
-
-            ax = fig.add_subplot(111, projection='3d')
-            X, Y = np.meshgrid(x_range, v_range)
-            ax.plot_surface(X, Y, q_func, rstride=1, cstride=1, cmap=cm.jet,linewidth=0.1, antialiased=True)
-            ax.set_xlabel("x")
-            ax.set_ylabel("v")
-            ax.set_zlabel("negative value")
-            plt.show()
 
     def plot_value_function(self):
 
@@ -484,6 +422,6 @@ class mountaincar_dpg():
 
 
 
-# car1 = mountaincar_dpg()
+# car1 = mountaincar_dpg(random_init_theta= False, environment= 'AcrobotContinuous-v0')
 #
 # car1.start_training()

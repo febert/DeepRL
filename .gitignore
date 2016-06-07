@@ -3,4 +3,5 @@ gym
 *.pyc
 .ipynb_checkpoints
 python
-./Tensorflow/
+Tensorflow/MNIST_data/
+Tensorflow/mnist_own_descent/
