@@ -227,8 +227,8 @@ class q_learning():
                     break
                 count += 1
 
-                action = self.policy(state, mode=self.policy_mode)
                 state, reward, done, info = self.env.step(action)
+                action = self.policy(state, mode=self.policy_mode)
                 #                episode.append((state, action, reward))
 
                 # select the proper line from the full feature matrix (one line per action)
