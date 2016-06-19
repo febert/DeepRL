@@ -13,7 +13,9 @@ import cPickle
 
 import gym as gym
 
-class mountaincar_dpg():
+from nn import nn
+
+class mountaincar_nn():
 
     def __init__(self,
                  gamma=0.99,
@@ -80,6 +82,11 @@ class mountaincar_dpg():
         print('tile resolution',self.tile_resolution)
         print('gamma',self.gamma)
 
+        # create neural network:
+        self.nn1 = nn()
+        self.nn1.main()
+
+
     def beta(self,state):
         # behavior policy
         beta_out = np.random.randn(1)*self.sigma_b + self.mu(state)
@@ -121,7 +128,6 @@ class mountaincar_dpg():
 
         ind[ind>=self.tile_resolution]=self.tile_resolution-1  #bound the index so that it doesn't exceed bounds
         ind = tuple(ind)
-
 
         grid = np.zeros(np.ones(obs_dim)*self.tile_resolution)
         try:
@@ -200,19 +206,8 @@ class mountaincar_dpg():
 
             episode.append((state, action, reward))
 
-
-            if (count)%10000 == 0:
-                print(" Intermediate Plot at step no. {}".format(count))
-
-                if self.select_env == 'MountainCarContinuous-v0':
-                    print("theta")
-                    print(self.theta)
-                    print('last v', self.v)
-                    print("beta: ")
-                    self.plot_policy(mode= 'stochastic')
-                    print("mu: ")
-                    self.plot_policy(mode= 'deterministic')
-                    self.plot_value_function()
+            # save mu to batch and train neural network
+            # self.nn1.add_to_batch(state, self.mu(state))
 
             if enable_render:
                 self.env.render()
@@ -262,23 +257,23 @@ class mountaincar_dpg():
             # perform a test run with the target policy:
             self.test_lengths.append(len(self.run_target_episode(enable_render=False)))
 
+            print("Finished run #{}".format(it + 1))
+            print("lasted {0} steps".format(len(episode)))
+
             if (it+1)%1 == 0:
-                # output training info
-                print("Finished run #{}".format(it + 1))
-                print("with a sigma exploration of  {}".format(self.sigma_b))
-#                print("and learning rate of {}".format(self.alpha))
-                print("lasted {0} steps".format(len(episode)))
 
                 if self.select_env == 'MountainCarContinuous-v0':
-                    print("theta")
-                    print(self.theta)
-                    print('last v', self.v)
-                    print("beta: ")
-                    self.plot_policy(mode= 'stochastic')
+                    #print("theta")
+                    #print(self.theta)
+                    #print('last v', self.v)
+
+                    #print("beta: ")
+                    #self.plot_policy(mode= 'stochastic')
                     print("mu: ")
                     self.plot_policy(mode= 'deterministic')
-                    self.plot_value_function()
 
+                    self.nn1.plot_learned_function()
+                    #self.plot_value_function()
 
 
             # print('sum tile features ', tile_features_mat[idx].sum())
@@ -417,9 +412,7 @@ class mountaincar_dpg():
         plt.show()
 
 
+if __name__ == '__main__':
 
-
-
-# car1 = mountaincar_dpg(random_init_theta= False, environment= 'AcrobotContinuous-v0')
-#
-# car1.start_training()
+    car1 = mountaincar_nn()
+    car1.start_training()
