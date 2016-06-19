@@ -37,14 +37,13 @@ class regression_test():
         self.target_func_range_max = (3,3)
         self.target_func_range_min = (0,0)
 
-        self.sigma = np.identity(2)*0.5
-
-        self.num_outputs = 1
         self.num_inputs = 2
+        self.num_outputs = 1
         self.batchsize = 100
 
         self.sess = tf.InteractiveSession()
         self.num_neurons_layer1 = 100
+        self.num_neurons_layer2 = 100
 
 
     def target_function(self, state, addnoise=True):
@@ -52,14 +51,14 @@ class regression_test():
         mu_out1 = np.array([1, 1])
         mu_out2 = np.array([2, 2])
 
-        def func1(input):
-            delta = input - mu_out1
-            return np.exp(-0.5*delta.dot(np.linalg.inv(self.sigma)).dot(delta)) / np.sqrt(2*np.pi*np.linalg.det(self.sigma))
+        sig1 =  np.identity(2)*0.1
+        sig2 =  np.identity(2)*0.1
 
-        if self.num_outputs == 2:
-            def func2(input):
-                delta = input - mu_out2
-                return np.exp(-0.5*delta.dot(np.linalg.inv(self.sigma)).dot(delta)) / np.sqrt(2*np.pi*np.linalg.det(self.sigma))
+
+        def func1(input, mu, sig):
+            delta = input - mu
+            return np.exp(-0.5*delta.dot(np.linalg.inv(sig)).dot(delta)) / np.sqrt(2*np.pi*np.linalg.det(sig))
+
 
 
         if addnoise:
@@ -67,10 +66,9 @@ class regression_test():
         else:
             noise = 0
 
-        if self.num_outputs == 2:
-            out = np.array([func1(state) + noise, func2(state) + noise])
-        else:
-            out = func1(state) + noise
+
+        out = func1(input= state, mu= mu_out1, sig= sig1) + func1(input= state, mu= mu_out2, sig= sig2) + noise
+
         return out
 
     def getbatch(self,train):
@@ -198,21 +196,31 @@ class regression_test():
                 tf.histogram_summary(layer_name + '/activations', activations)
                 return activations
 
-        hidden1 = nn_layer(self.x, self.num_inputs, self.num_neurons_layer1, 'layer1')
 
-        with tf.name_scope('dropout'):
-            self.keep_prob = tf.placeholder(tf.float32)
-            tf.scalar_summary('dropout_keep_probability', self.keep_prob)
-            dropped = tf.nn.dropout(hidden1, self.keep_prob)
 
-        self.y = nn_layer(dropped, self.num_neurons_layer1, self.num_outputs, 'layer2', act=tf.identity)
+        self.keep_prob = tf.placeholder(tf.float32)
+
+        with tf.name_scope('hidden_1'):
+            a1 = nn_layer(self.x, self.num_inputs, self.num_neurons_layer1, 'layer1')
+            with tf.name_scope('dropout'):
+                self.keep_prob1 = tf.placeholder(tf.float32)
+                tf.scalar_summary('dropout_keep_probability_layer1', self.keep_prob1)
+                dropped1 = tf.nn.dropout(a1, self.keep_prob1)
+
+        with tf.name_scope('hidden_2'):
+            a2 = nn_layer(dropped1, self.num_neurons_layer1, self.num_neurons_layer2, 'layer2')
+            with tf.name_scope('dropout'):
+                self.keep_prob2 = tf.placeholder(tf.float32)
+                tf.scalar_summary('dropout_keep_probability_layer2', self.keep_prob2)
+                dropped2 = tf.nn.dropout(a2, self.keep_prob2)
+
+        self.y = nn_layer(dropped2, self.num_neurons_layer2, self.num_outputs, 'layer3', act=tf.identity)
 
         with tf.name_scope('mse'):
             squ_diff = tf.pow(self.y_- self.y, 2)
             with tf.name_scope('total'):
                 mean_squared_error = tf.reduce_mean(squ_diff)
             tf.scalar_summary('mean squared error', mean_squared_error)
-
 
 
         learning_rate = tf.placeholder(tf.float32, shape= [], name='learning_rate')
@@ -244,7 +252,7 @@ class regression_test():
             else:
                 xs, ys = self.getbatch(train)
                 k = 1.0
-            return {self.x: xs, self.y_: ys, self.keep_prob: k}
+            return {self.x: xs, self.y_: ys, self.keep_prob1: k, self.keep_prob2: k}
 
         num_epochs = 10
         steps_per_epoch = 1000
@@ -284,7 +292,7 @@ class regression_test():
                     self.plot_target_function()
 
     def eval_trained_function(self, input):
-        return self.y.eval(feed_dict= {self.x : input,  self.keep_prob: 1.0})
+        return self.y.eval(feed_dict= {self.x : input,  self.keep_prob1: 1.0, self.keep_prob2: 1.0})
 
     def main(self):
         if tf.gfile.Exists(FLAGS.summaries_dir):
