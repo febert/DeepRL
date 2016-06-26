@@ -207,7 +207,7 @@ class mountaincar_nn():
             episode.append((state, action, reward))
 
             # save mu to batch and train neural network
-            # self.nn1.add_to_batch(state, self.mu(state))
+            self.nn1.add_to_batch(state, self.mu(state))
 
             if enable_render:
                 self.env.render()

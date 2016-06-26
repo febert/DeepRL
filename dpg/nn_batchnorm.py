@@ -10,8 +10,6 @@ from tensorflow.examples.tutorials.mnist import input_data
 flags = tf.app.flags
 FLAGS = flags.FLAGS
 
-flags.DEFINE_string('summaries_dir', './regressiontest/regressionlogs', 'Summaries directory')
-
 import numpy as np
 
 np.set_printoptions(threshold=np.inf)
@@ -27,10 +25,10 @@ import gym as gym
 
 class nn_batchnorm():
 
-    def __init__(self):
+    def __init__(self, input_low, input_high, car):
 
-        self.target_func_range_max = (3,3)
-        self.target_func_range_min = (0,0)
+        self.input_high = input_high
+        self.input_low = input_low
 
         self.sigma = np.identity(2)*0.5
 
@@ -50,6 +48,10 @@ class nn_batchnorm():
 
         self.step = 0
 
+        self.summaries_dir = './regressiontest/batchnorm'
+
+        self.car1 = car
+
     def add_to_batch(self, state, mu):
 
         self.batch_train_data[self.batchindex,:] = state
@@ -67,8 +69,8 @@ class nn_batchnorm():
         resolution = 50
 
         # values to evaluate policy at
-        x_range = np.linspace(self.target_func_range_min[0], self.target_func_range_max[0], resolution)
-        v_range = np.linspace(self.target_func_range_min[1], self.target_func_range_max[1], resolution)
+        x_range = np.linspace(self.input_high[0], self.input_low[0], resolution)
+        v_range = np.linspace(self.input_high[1], self.input_low[1], resolution)
 
         # get actions in a grid
         vals = np.zeros((resolution, resolution))
@@ -206,8 +208,7 @@ class nn_batchnorm():
 
         # Merge all the summaries and write them out to /tmp/mnist_logs (by default)
         self.merged = tf.merge_all_summaries()
-        self.train_writer = tf.train.SummaryWriter(FLAGS.summaries_dir + '/train', sess.graph)
-        self.test_writer = tf.train.SummaryWriter(FLAGS.summaries_dir + '/test')
+        self.train_writer = tf.train.SummaryWriter(self.summaries_dir, sess.graph)
         tf.initialize_all_variables().run()
 
     def pefrom_train_step(self):
@@ -230,18 +231,55 @@ class nn_batchnorm():
         self.step += 1
 
         if self.step % 500 == 0:
-            print('result after minibatch no. {} : {}'.format(self.step, mse_val))
+            print('result after minibatch no. {} : mean squared error: {}'.format(self.step, mse_val))
             print('batch train data', self.batch_train_data)
             print('batch train labels', self.batch_labels)
             self.plot_learned_function()
 
+            num_steps= self.test_learned_policy()
+            print('episode length using learned policy:',num_steps)
 
     def eval_trained_function(self, input):
         return self.y.eval(feed_dict= {self.x : input ,self.phase_train: False})
 
+    def test_learned_policy(self, limit=20000, enable_render=False):
+
+        def apply_limits(action):
+            if action < self.car1.action_limits[0]:
+                action = self.car1.action_limits[0]
+            if action > self.car1.action_limits[1]:
+                action = self.car1.action_limits[1]
+            return action
+
+        episode = []
+        state = self.car1.env.reset()
+
+        count = 0
+        done = False
+
+        while ( not done ):
+
+            if len(episode)>limit:
+                return episode
+
+            count += 1
+
+            print('state',state)
+            action = self.eval_trained_function(state.reshape((1,2)))[0]
+            print(action)
+            action = apply_limits(action)
+
+            state, reward, done, info = self.car1.env.step(action)
+
+            if enable_render:
+                self.car1.env.render()
+                # print("step no. {}".format(count))
+
+        return count
+
     def main(self):
-        if tf.gfile.Exists(FLAGS.summaries_dir):
-            tf.gfile.DeleteRecursively(FLAGS.summaries_dir)
-        tf.gfile.MakeDirs(FLAGS.summaries_dir)
+        if tf.gfile.Exists(self.summaries_dir):
+            tf.gfile.DeleteRecursively(self.summaries_dir)
+        tf.gfile.MakeDirs(self.summaries_dir)
 
         self.initialize_training(self.sess)

@@ -27,10 +27,10 @@ import gym as gym
 
 class nn():
 
-    def __init__(self):
+    def __init__(self, input_low, input_high, car):
 
-        self.target_func_range_max = (3,3)
-        self.target_func_range_min = (0,0)
+        self.input_high = input_high
+        self.input_low = input_low
 
         self.sigma = np.identity(2)*0.5
 
@@ -52,6 +52,9 @@ class nn():
 
         self.step = 0
 
+        self.car1 = car
+
+
     def add_to_batch(self, state, mu):
 
         self.batch_train_data[self.batchindex,:] = state
@@ -69,8 +72,8 @@ class nn():
         resolution = 50
 
         # values to evaluate policy at
-        x_range = np.linspace(self.target_func_range_min[0], self.target_func_range_max[0], resolution)
-        v_range = np.linspace(self.target_func_range_min[1], self.target_func_range_max[1], resolution)
+        x_range = np.linspace(self.input_low[0], self.input_high[0], resolution)
+        v_range = np.linspace(self.input_low[1], self.input_high[1], resolution)
 
         # get actions in a grid
         vals = np.zeros((resolution, resolution))
@@ -161,10 +164,10 @@ class nn():
             return tf.mul(input, c_broadcast)
 
         self.x_rescaled = rescale_input(self.x)
-        make_input_output_histogramm(self.x_rescaled, self.y_)
+        # make_input_output_histogramm(self.x_rescaled, self.y_)
 
         with tf.name_scope('hidden_1'):
-            a1 = nn_layer(self.x_rescaled, self.num_inputs, self.num_neurons_layer1, 'layer1')
+            a1 = nn_layer(self.x, self.num_inputs, self.num_neurons_layer1, 'layer1')   # no rescaling!!
             with tf.name_scope('dropout'):
                 dropped1 = tf.nn.dropout(a1, self.keep_prob)
 
@@ -220,6 +223,40 @@ class nn():
 
     def eval_trained_function(self, input):
         return self.y.eval(feed_dict= {self.x : input,  self.keep_prob: 1.0})
+
+    def test_learned_policy(self, limit=20000, enable_render=False):
+
+        def apply_limits(self,action):
+            if action < self.action_limits[0]:
+                action = self.action_limits[0]
+            if action > self.action_limits[1]:
+                action = self.action_limits[1]
+            return action
+
+        episode = []
+        state = self.car1.env.reset()
+
+        count = 0
+        done = False
+
+        while ( not done ):
+
+            if len(episode)>limit:
+                return episode
+
+            count += 1
+
+            action = self.eval_trained_function(state)
+            action = apply_limits(action)
+
+            state_prime, reward, done, info = self.car1.env.step(action)
+
+
+            if enable_render:
+                self.car1.env.render()
+                # print("step no. {}".format(count))
+
+        return episode
 
     def main(self):
         if tf.gfile.Exists(FLAGS.summaries_dir):
