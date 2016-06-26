@@ -10,11 +10,7 @@ from tensorflow.examples.tutorials.mnist import input_data
 flags = tf.app.flags
 FLAGS = flags.FLAGS
 
-flags.DEFINE_integer('max_steps', 10000, 'Number of steps to run trainer.')
-flags.DEFINE_float('learning_rate', 0.001, 'Initial learning rate.')
-flags.DEFINE_float('dropout', 0.9, 'Keep probability for training dropout.')
-flags.DEFINE_string('data_dir', '/tmp/data', 'Directory for storing data')
-flags.DEFINE_string('summaries_dir', './regressiontest/regressionlogs', 'Summaries directory')
+flags.DEFINE_string('summaries_dir', './regressiontest/regression_batchnormalized', 'Summaries directory')
 
 import numpy as np
 
@@ -39,12 +35,13 @@ class regression_test():
 
         self.num_inputs = 2
         self.num_outputs = 1
-        self.batchsize = 100
+        self.batchsize = 50
 
         self.sess = tf.InteractiveSession()
         self.num_neurons_layer1 = 100
         self.num_neurons_layer2 = 100
 
+        self.summaries_dir = './regressiontest/regression_batchnormalized'
 
     def target_function(self, state, addnoise=True):
 
@@ -99,7 +96,7 @@ class regression_test():
         vals = np.zeros((resolution, resolution))
         for i, x in enumerate(x_range):
             for j, v in enumerate(v_range):
-                vals[i,j]= self.target_function((x,v), addnoise= False)
+                vals[j,i]= self.target_function((x,v), addnoise= False)
 
         fig = plt.figure()
 
@@ -124,7 +121,10 @@ class regression_test():
         for i, x in enumerate(x_range):
             for j, v in enumerate(v_range):
                 x_ = np.array([x,v],dtype=np.float32).reshape((1,2))
-                vals[i,j]= self.eval_trained_function(x_)[0]
+                eval = self.eval_trained_function(x_)[0]
+                # print(eval)
+                vals[j,i]= eval[0]
+
 
         fig = plt.figure()
 
@@ -140,6 +140,7 @@ class regression_test():
     def train(self, sess):
 
         # Create a multilayer model.
+
 
         # Input placehoolders
         with tf.name_scope('input'):
@@ -196,25 +197,55 @@ class regression_test():
                 tf.histogram_summary(layer_name + '/activations', activations)
                 return activations
 
+        self.phase_train = tf.placeholder(tf.bool, name='phase_train')
 
+        def batch_norm(x,shape_x, scope):
+            """
+            Batch normalization on convolutional maps.
+            Args:
+                x:           Tensor, 4D BHWD input maps
+                n_out:       integer, depth of input maps
+                scope:       string, variable scope
+            Return:
+                normed:      batch-normalized maps
+            """
+            with tf.variable_scope(scope):
+                beta = tf.Variable(tf.constant(0.0, shape=[shape_x]),
+                                             name='beta', trainable=True)
+                gamma = tf.Variable(tf.constant(1.0, shape=[shape_x]),
+                                              name='gamma', trainable=True)
+                batch_mean, batch_var = tf.nn.moments(x, axes= [0], name='moments')
+                ema = tf.train.ExponentialMovingAverage(decay=0.9)
 
-        self.keep_prob = tf.placeholder(tf.float32)
+                def mean_var_with_update():
+                    ema_apply_op = ema.apply([batch_mean, batch_var])
+                    with tf.control_dependencies([ema_apply_op]):
+                        return tf.identity(batch_mean), tf.identity(batch_var)
+
+                # summary_batch_mean = ema.average(batch_mean)
+                # summary_var_mean = ema.average(batch_var)
+                # variable_summaries(summary_batch_mean, scope + '/batch_mean')
+                # variable_summaries(summary_var_mean, scope + '/batch_mean')
+
+                mean, var = tf.cond(self.phase_train,
+                                    mean_var_with_update,
+                                    lambda: (ema.average(batch_mean), ema.average(batch_var)))
+                normed = tf.nn.batch_normalization(x, mean, var, beta, gamma, 1e-3)
+
+            return normed, mean, var, beta, gamma
+
+        x_bn, mean, var, beta, gamma = batch_norm(self.x, shape_x= self.num_inputs, scope='input_bn')
 
         with tf.name_scope('hidden_1'):
-            a1 = nn_layer(self.x, self.num_inputs, self.num_neurons_layer1, 'layer1')
-            with tf.name_scope('dropout'):
-                self.keep_prob1 = tf.placeholder(tf.float32)
-                tf.scalar_summary('dropout_keep_probability_layer1', self.keep_prob1)
-                dropped1 = tf.nn.dropout(a1, self.keep_prob1)
+            a1 = nn_layer(x_bn, self.num_inputs, self.num_neurons_layer1, 'layer1')
+            a1_bn, _, _, _, _ = batch_norm(a1, shape_x= self.num_neurons_layer1, scope= 'layer_1_bn')
+
 
         with tf.name_scope('hidden_2'):
-            a2 = nn_layer(dropped1, self.num_neurons_layer1, self.num_neurons_layer2, 'layer2')
-            with tf.name_scope('dropout'):
-                self.keep_prob2 = tf.placeholder(tf.float32)
-                tf.scalar_summary('dropout_keep_probability_layer2', self.keep_prob2)
-                dropped2 = tf.nn.dropout(a2, self.keep_prob2)
+            a2 = nn_layer(a1_bn, self.num_neurons_layer1, self.num_neurons_layer2, 'layer2')
+            a2_bn, _, _, _, _ = batch_norm(a2, shape_x= self.num_neurons_layer1, scope= 'layer_2_bn')
 
-        self.y = nn_layer(dropped2, self.num_neurons_layer2, self.num_outputs, 'layer3', act=tf.identity)
+        self.y = nn_layer(a2_bn, self.num_neurons_layer2, self.num_outputs, 'layer3', act=tf.identity)
 
         with tf.name_scope('mse'):
             squ_diff = tf.pow(self.y_- self.y, 2)
@@ -238,54 +269,75 @@ class regression_test():
         # Every 10th step, measure test-set accuracy, and write test summaries
         # All other steps, run train_step on training data, & add training summaries
 
-        def feed_dict(train):
+        def feed_dict(if_train):
             """Make a TensorFlow feed_dict: maps data onto Tensor placeholders."""
-            if train:
-                xs, ys = self.getbatch(train)
-                k = FLAGS.dropout
+            if if_train:
+                xs, ys = self.getbatch(if_train)
+                select_train = True
             else:
-                xs, ys = self.getbatch(train)
-                k = 1.0
-            return {self.x: xs, self.y_: ys, self.keep_prob1: k, self.keep_prob2: k}
+                xs, ys = self.getbatch(if_train)
+                select_train = False
 
-        num_epochs = 10
-        steps_per_epoch = 1000
+            return {self.x: xs, self.y_: ys, self.phase_train: select_train}
+
+        num_epochs = 3
+        steps_per_epoch = 500
         for epoch in range(num_epochs):
+
             l_r = 10**np.linspace(-2,-4,num_epochs)[epoch]
             print("epoch %d, learning rate %g"%(epoch,l_r))
 
             for step in range(steps_per_epoch):
 
                 if step % 100 == 0:  # Record summaries and test-set accuracy
-                    tmpdict = feed_dict(train= False)
+                    tmpdict = feed_dict(if_train= False)
                     tmpdict[learning_rate] = l_r
-                    summary, acc = sess.run([merged, mean_squared_error], feed_dict=tmpdict)
+
+                    summary, acc ,retrive_xbn, r_mean, r_var, r_beta, r_gamma = sess.run( [merged, mean_squared_error, x_bn,mean, var, beta, gamma ], feed_dict=tmpdict)
                     test_writer.add_summary(summary, step + epoch*steps_per_epoch)
                     print('mean_squared_error at step %s: %s' % (step + epoch*steps_per_epoch, acc))
+
+                    print('input data:',tmpdict[self.x])
+                    print('mean', r_mean)
+                    print('var', r_var)
+                    print('beta', r_beta)
+                    print('gamma', r_gamma)
+
+                    print('retrieve xbn:', retrive_xbn)
+
                 else:  # Record train set summaries, and train
-                    tmpdict = feed_dict(train= True)
+                    tmpdict = feed_dict(if_train= True)
                     tmpdict[learning_rate] = l_r
-                    summary, _ = sess.run([merged, train_step],feed_dict=tmpdict)
+                    summary, _ , r_y, retrive_xbn, r_mean, r_var, r_beta, r_gamma = sess.run([merged, train_step, self.y, x_bn,mean, var, beta, gamma],feed_dict=tmpdict)
                     train_writer.add_summary(summary, step + epoch*steps_per_epoch)
 
-                if (step + epoch*steps_per_epoch) %1000 == 0:
+                    # print('input data train:',tmpdict[self.x])
+                    # print('output data',  r_y)
+                    # print('mean', r_mean)
+                    # print('var', r_var)
+                    # print('beta', r_beta)
+                    # print('gamma', r_gamma)
+                    #
+                    # print('retrieve xbn:', retrive_xbn)
+
+                if (step + epoch*steps_per_epoch) %500 == 0:
                     self.plot_learned_function()
                     self.plot_target_function()
 
     def eval_trained_function(self, input):
-        return self.y.eval(feed_dict= {self.x : input,  self.keep_prob1: 1.0, self.keep_prob2: 1.0})
+        return self.y.eval(feed_dict= {self.x : input ,self.phase_train: False})
 
     def main(self):
-        if tf.gfile.Exists(FLAGS.summaries_dir):
-            tf.gfile.DeleteRecursively(FLAGS.summaries_dir)
-        tf.gfile.MakeDirs(FLAGS.summaries_dir)
+        if tf.gfile.Exists(self.summaries_dir):
+            tf.gfile.DeleteRecursively(self.summaries_dir)
+        tf.gfile.MakeDirs(self.summaries_dir)
 
         self.train(self.sess)
-
 
 if __name__ == '__main__':
 
     t1 = regression_test()
     t1.main()
-    t1.plot_target_function()
     t1.plot_learned_function()
+    t1.plot_target_function()
+
