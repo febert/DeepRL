@@ -5,24 +5,18 @@ import numpy as np
 
 np.set_printoptions(threshold=np.inf)
 
-import matplotlib.pyplot as plt
-from matplotlib import cm
-from mpl_toolkits.mplot3d import axes3d
-import time
-import math
-
-import cPickle
-
 
 from nn import nn
+# from nn_batchnorm import nn_batchnorm
 
 class mu_offline_training():
 
     def __init__(self):
 
-        self.num_sgd_updates = 100000
+        self.num_sgd_updates = 20000
 
         # create neural network:
+        # self.nn1 = nn_batchnorm()
         self.nn1 = nn()
         self.nn1.main()
 

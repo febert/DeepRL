@@ -25,7 +25,7 @@ import cPickle
 import gym as gym
 
 
-class nn():
+class nn_batchnorm():
 
     def __init__(self):
 
@@ -41,8 +41,6 @@ class nn():
         self.sess = tf.InteractiveSession()
         self.num_neurons_layer1 = 100
         self.num_neurons_layer2 = 100
-
-        self.keep_prob_val =  0.9
 
         # parameteres for network training
         batchsize = 50
@@ -110,14 +108,6 @@ class nn():
             initial = tf.constant(0.1, shape=shape)
             return tf.Variable(initial)
 
-        def make_input_output_histogramm(inp, labels):
-            x_slice = tf.slice(input_= inp, begin= [0,0], size= [-1,1])
-            v_slice = tf.slice(input_= inp, begin= [0,1], size= [-1,1])
-
-            tf.histogram_summary('x_input', x_slice)
-            tf.histogram_summary('v_input', v_slice)
-            tf.histogram_summary('labels hist', labels)
-
         def variable_summaries(var, name):
             """Attach a lot of summaries to a Tensor."""
             with tf.name_scope('summaries'):
@@ -153,27 +143,55 @@ class nn():
                 tf.histogram_summary(layer_name + '/activations', activations)
                 return activations
 
-        self.keep_prob = tf.placeholder(dtype= tf.float32, shape= [], name= 'keep_prob')
+        self.phase_train = tf.placeholder(tf.bool, name='phase_train')
 
-        def rescale_input(input):
-            c = tf.constant([1,10], shape=[1, 2], dtype=tf.float32)
-            c_broadcast = tf.tile(c, [tf.shape(input)[0], 1])
-            return tf.mul(input, c_broadcast)
+        def batch_norm(x,shape_x, scope):
+            """
+            Batch normalization on convolutional maps.
+            Args:
+                x:           Tensor, 4D BHWD input maps
+                shape_x:       integer, depth of input maps
+                scope:       string, variable scope
+            Return:
+                normed:      batch-normalized maps
+            """
+            with tf.variable_scope(scope):
+                beta = tf.Variable(tf.constant(0.0, shape=[shape_x]),
+                                             name='beta', trainable=True)
+                gamma = tf.Variable(tf.constant(1.0, shape=[shape_x]),
+                                              name='gamma', trainable=True)
+                batch_mean, batch_var = tf.nn.moments(x, axes= [0], name='moments')
+                ema = tf.train.ExponentialMovingAverage(decay=0.9)
 
-        self.x_rescaled = rescale_input(self.x)
-        make_input_output_histogramm(self.x_rescaled, self.y_)
+                def mean_var_with_update():
+                    ema_apply_op = ema.apply([batch_mean, batch_var])
+                    with tf.control_dependencies([ema_apply_op]):
+                        return tf.identity(batch_mean), tf.identity(batch_var)
+
+                # summary_batch_mean = ema.average(batch_mean)
+                # summary_var_mean = ema.average(batch_var)
+                # variable_summaries(summary_batch_mean, scope + '/batch_mean')
+                # variable_summaries(summary_var_mean, scope + '/batch_mean')
+
+                mean, var = tf.cond(self.phase_train,
+                                    mean_var_with_update,
+                                    lambda: (ema.average(batch_mean), ema.average(batch_var)))
+                normed = tf.nn.batch_normalization(x, mean, var, beta, gamma, 1e-3)
+
+            return normed, mean, var, beta, gamma
+
+        x_bn, mean, var, beta, gamma = batch_norm(self.x, shape_x= self.num_inputs, scope='input_bn')
 
         with tf.name_scope('hidden_1'):
-            a1 = nn_layer(self.x_rescaled, self.num_inputs, self.num_neurons_layer1, 'layer1')
-            with tf.name_scope('dropout'):
-                dropped1 = tf.nn.dropout(a1, self.keep_prob)
+            a1 = nn_layer(x_bn, self.num_inputs, self.num_neurons_layer1, 'layer1')
+            a1_bn, _, _, _, _ = batch_norm(a1, shape_x= self.num_neurons_layer1, scope= 'layer_1_bn')
+
 
         with tf.name_scope('hidden_2'):
-            a2 = nn_layer(dropped1, self.num_neurons_layer1, self.num_neurons_layer2, 'layer2')
-            with tf.name_scope('dropout'):
-                dropped2 = tf.nn.dropout(a2, self.keep_prob)
+            a2 = nn_layer(a1_bn, self.num_neurons_layer1, self.num_neurons_layer2, 'layer2')
+            a2_bn, _, _, _, _ = batch_norm(a2, shape_x= self.num_neurons_layer1, scope= 'layer_2_bn')
 
-        self.y = nn_layer(dropped2, self.num_neurons_layer2, self.num_outputs, 'layer3', act=tf.identity)
+        self.y = nn_layer(a2_bn, self.num_neurons_layer2, self.num_outputs, 'layer3', act=tf.identity)
 
         with tf.name_scope('mse'):
             squ_diff = tf.pow(self.y_- self.y, 2)
@@ -201,8 +219,8 @@ class nn():
             xs = self.batch_train_data
 
             ys = self.batch_labels
-            k = self.keep_prob_val
-            return {self.x: xs, self.y_: ys, self.keep_prob:k, self.learning_rate: l_r}
+
+            return {self.x: xs, self.y_: ys, self.phase_train: True, self.learning_rate: l_r}
 
         summary, _, mse_val = self.sess.run([self.merged, self.train_step, self.mean_squared_error],feed_dict=feed_dict())
 
@@ -219,7 +237,7 @@ class nn():
 
 
     def eval_trained_function(self, input):
-        return self.y.eval(feed_dict= {self.x : input,  self.keep_prob: 1.0})
+        return self.y.eval(feed_dict= {self.x : input ,self.phase_train: False})
 
     def main(self):
         if tf.gfile.Exists(FLAGS.summaries_dir):
