@@ -27,8 +27,12 @@ class q_learning():
                  lambda_=0.5,
                  algorithm='Q-learn',
                  tile_resolution=10,
-                 alpha_w=5e-4
+                 alpha_w=5e-4,
+                 forget_rate=0.0,
+                 nn_size_hidden = [300,400,400]
                  ):
+
+        self.forget_rate = forget_rate
 
         self.alpha_w = alpha_w
 
@@ -90,7 +94,7 @@ class q_learning():
         print('tile resolution', self.tile_resolution)
 
         # simultaneous evaluation through neural network
-        self.qnn = qnn.qnn(self.statedim, self.num_actions)
+        self.qnn = qnn.qnn(self.statedim, self.num_actions, size_hidden=nn_size_hidden)
 
     def get_tile_feature(self, state):
 
@@ -174,7 +178,10 @@ class q_learning():
         return prob_distrib
 
     # epsilon-greedy but deterministic or stochastic is a choice
-    def policy(self, state, mode='deterministic', deepQ=False):
+    def policy(self, state, mode='deterministic', deepQ=False, w=None):
+        if w is None:
+            w = self.w
+
         explore = bool(np.random.choice([1, 0], p=[self.epsilon, 1 - self.epsilon]))
 
         features = self.get_full_feature(state)
@@ -185,7 +192,7 @@ class q_learning():
                 # print(state, q)
                 return np.argmax(q.squeeze())#np.random.choice(np.argwhere(q == np.amax(q)).flatten())
             if not deepQ:
-                q = features.dot(self.w)
+                q = features.dot(w)
                 return np.random.choice(np.argwhere(q == np.amax(q)).flatten())
         elif explore:
             # print('explore')
@@ -252,7 +259,8 @@ class q_learning():
 
                 self.eligibiltiy_vector = self.eligibiltiy_vector * self.gamma * self.lambda_ + tile_features
 
-                self.w += self.alpha_w * delta_t * self.eligibiltiy_vector
+                # self.w += self.alpha_w * delta_t * self.eligibiltiy_vector
+                self.w = (1-self.forget_rate)*self.w + self.alpha_w * delta_t * self.eligibiltiy_vector
 
                 # # evaluation alone, to test a neural network
                 # self.qnn.train_wait_for_batch(prev_state.reshape(1,-1), np.array(prev_action).reshape(-1), np.array(reward).reshape(-1), state.reshape(1,-1))
@@ -349,17 +357,18 @@ class q_learning():
                 if (done):
                     self.episode_lengths.append(count)
 
-            print("Episode %d" % (it))
-            if (done): print("Length %d" % (self.episode_lengths[-1]))
-
             if (it + 1) % 10 == 0:
+                print("Episode %d" % (it))
+                if (done): print("Length %d" % (self.episode_lengths[-1]))
+
+            if (it + 1) % 50 == 0:
                 if self.select_env == 'MountainCar-v0':
                     # print('last w', self.w)
                     self.plot_deepQ_policy(mode='deterministic')
                     self.plot_deepQ_function()
 
-            if (it + 1) % 10 == 0:
-                self.plot_training()
+            # if (it + 1) % 10 == 0:
+            #     self.plot_training()
 
         self.epsilon = epsilon_backup
 
@@ -394,24 +403,29 @@ class q_learning():
         ax.set_zlabel("eligibility")
         plt.show()
 
-    def plot_q_function(self):
+    def plot_q_function(self, w=None):
+        if w is None:
+            w = self.w
+
+        obs_low = self.env.observation_space.low
+        obs_high = self.env.observation_space.high
+
+        # values to evaluate policy at
+        x_range = np.linspace(obs_low[0], obs_high[0], self.tile_resolution * 3 + 1)
+        v_range = np.linspace(obs_low[1], obs_high[1], self.tile_resolution * 3)
+
+        # get actions in a grid
+        q_func = np.zeros((v_range.shape[0], x_range.shape[0], self.num_actions))
+        q_opt = np.zeros((v_range.shape[0], x_range.shape[0]))
+        for i, state1 in enumerate(x_range):
+            for j, state2 in enumerate(v_range):
+                # print(np.argmax(self.get_features((x,v)).dot(self.theta)), end="")
+                q_func[j, i, :] = w.dot(self.get_full_feature((state1, state2)).T)
+        q_opt = np.max(q_func, axis=2)
 
         for action in range(self.num_actions):
             print('plotting the q-function for action {}'.format(action))
 
-            obs_low = self.env.observation_space.low
-            obs_high = self.env.observation_space.high
-
-            # values to evaluate policy at
-            x_range = np.linspace(obs_low[0], obs_high[0], self.tile_resolution * 3 + 1)
-            v_range = np.linspace(obs_low[1], obs_high[1], self.tile_resolution * 3)
-
-            # get actions in a grid
-            q_func = np.zeros((v_range.shape[0], x_range.shape[0]))
-            for i, state1 in enumerate(x_range):
-                for j, state2 in enumerate(v_range):
-                    # print(np.argmax(self.get_features((x,v)).dot(self.theta)), end="")
-                    q_func[j, i] = self.w.dot(self.get_full_feature((state1, state2))[action])
             print("")
 
             fig = plt.figure()
@@ -420,12 +434,29 @@ class q_learning():
             ax = fig.add_subplot(111)
             X, Y = np.meshgrid(x_range, v_range)
             # ax.plot_surface(X, Y, q_func, rstride=1, cstride=1, cmap=cm.jet, linewidth=0.1, antialiased=True)
-            im = ax.pcolormesh(X, Y, q_func)
+            im = ax.pcolormesh(X, Y, q_func[:,:,action])
             fig.colorbar(im)
             ax.set_xlabel("x")
             ax.set_ylabel("v")
             # ax.set_zlabel("negative value")
             plt.show()
+
+        print('plotting the q^star-function (optimal)')
+
+        print("")
+
+        fig = plt.figure()
+
+        # ax = fig.add_subplot(111, projection='3d')
+        ax = fig.add_subplot(111)
+        X, Y = np.meshgrid(x_range, v_range)
+        # ax.plot_surface(X, Y, q_func, rstride=1, cstride=1, cmap=cm.jet, linewidth=0.1, antialiased=True)
+        im = ax.pcolormesh(X, Y, q_opt)
+        fig.colorbar(im)
+        ax.set_xlabel("x")
+        ax.set_ylabel("v")
+        # ax.set_zlabel("negative value")
+        plt.show()
 
     def plot_deepQ_function(self):
 
@@ -433,8 +464,8 @@ class q_learning():
         obs_high = self.env.observation_space.high
 
         # values to evaluate policy at
-        x_range = np.linspace(obs_low[0], obs_high[0], self.tile_resolution * 3 + 1)
-        v_range = np.linspace(obs_low[1], obs_high[1], self.tile_resolution * 3)
+        x_range = np.linspace(obs_low[0], obs_high[0], self.tile_resolution +1)
+        v_range = np.linspace(obs_low[1], obs_high[1], self.tile_resolution +1)
         states = []
         for state2 in v_range:
             for state1 in x_range:
@@ -512,7 +543,9 @@ class q_learning():
 
         pkl_file.close()
 
-    def plot_policy(self, resolution=100, mode='deterministic'):
+    def plot_policy(self, resolution=100, mode='deterministic', w=None):
+        if w is None:
+            w = self.w
 
         # backup of value
         save_epsilon = self.epsilon
@@ -530,7 +563,7 @@ class q_learning():
         for i, x in enumerate(x_range):
             for j, v in enumerate(v_range):
                 # print(np.argmax(self.get_features((x,v)).dot(self.theta)), end="")
-                greedy_policy[i, j] = self.policy((x, v), mode)
+                greedy_policy[i, j] = self.policy((x, v), mode, w=w)
         print("")
 
         # plot policy
