@@ -264,9 +264,9 @@ class nn_batchnorm():
 
             count += 1
 
-            print('state',state)
+            # print('state',state)
             action = self.eval_trained_function(state.reshape((1,2)))[0]
-            print(action)
+            # print(action)
             action = apply_limits(action)
 
             state, reward, done, info = self.car1.env.step(action)
