@@ -11,10 +11,14 @@ class qnn:
                  size_hidden = [300,400,400],
                  descent_method = 'adam',
                 #  descent_method = 'grad',
-                 learning_rate = 1e-6,
+                 learning_rate = 1e-4,
                  batch_size = 50,
-                 replay_memory = False):
+                 replay_memory = False,
+                 keep_prob_val = 1.0,
+                 is_a_prime_external = False):
 
+        self.is_a_prime_external = is_a_prime_external # This means SARSA instead of Q-learning
+        self.keep_prob_val = keep_prob_val
         self.batch_size = batch_size
 
         def weight_variable(shape):
@@ -200,7 +204,49 @@ class qnn:
                         tf.histogram_summary(layer_name + '/activations_s_prime', activations_s_prime)
                     return (activations_s, activations_s_prime)
 
+        # def nn_dual_layer_with_decay(input_tensor_list, input_dim, output_dim, layer_name, act=tf.nn.relu, decay=0.999):
+        #     """Create a layer with two different inputs and two different outputs
+        #        calculated with the same weights. Thought for Q_learning training.
+        #
+        #     It does a matrix multiply, bias add, and then uses relu to nonlinearize.
+        #     It also sets up name scoping so that the resultant graph is easy to read,
+        #     and adds a number of summary ops.
+        #     """
+        #     # Adding a name scope ensures logical grouping of the layers in the graph.
+        #     with tf.name_scope(layer_name):
+        #         # This Variable will hold the state of the weights for the layer
+        #         with tf.name_scope('weights'):
+        #             weights = weight_variable([input_dim, output_dim])
+        #             variable_summaries(weights, layer_name + '/weights')
+        #         with tf.name_scope('biases'):
+        #             biases = bias_variable([output_dim])
+        #             variable_summaries(biases, layer_name + '/biases')
+        #         # prime network uses a moving average of the main network
+        #         self.ema = tf.train.ExponentialMovingAverage(decay=decay)
+        #         self.ema = self.ema.apply([weights,biases])
+        #         # if it is not the last layer
+        #         if act is not None:
+        #             with tf.name_scope('Wx_plus_b'):
+        #                 preactivate_s = tf.matmul(input_tensor_list[0], weights) + biases
+        #                 tf.histogram_summary(layer_name + '/pre_activations_s', preactivate_s)
+        #                 preactivate_s_prime = tf.matmul(input_tensor_list[1], weights) + biases
+        #                 tf.histogram_summary(layer_name + '/pre_activations_s_prime', preactivate_s_prime)
+        #             activations_s = act(preactivate_s, 'activation_s')
+        #             tf.histogram_summary(layer_name + '/activations_s', activations_s)
+        #             activations_s_prime = act(preactivate_s_prime, 'activation_s_prime')
+        #             tf.histogram_summary(layer_name + '/activations_s_prime', activations_s_prime)
+        #             return (activations_s, activations_s_prime)
+        #         # if it is the last layer
+        #         else:
+        #             with tf.name_scope('Wx_plus_b'):
+        #                 activations_s = tf.matmul(input_tensor_list[0], weights) + biases
+        #                 tf.histogram_summary(layer_name + '/activations_s', activations_s)
+        #                 activations_s_prime = tf.matmul(input_tensor_list[1], weights) + biases
+        #                 tf.histogram_summary(layer_name + '/activations_s_prime', activations_s_prime)
+        #             return (activations_s, activations_s_prime)
+        #
 
+        # NORMALIZE INPUT
         with tf.name_scope('input'):
             mean = tf.constant([-0.3, 0], name='batch_mean')
             variance = tf.constant([0.81, 0.0049], name='batch_variance')
@@ -237,9 +283,14 @@ class qnn:
             # action from state s to state s_prime
             self.a = tf.placeholder(tf.int64, shape = [None], name='action')
             a_one_hot = tf.one_hot(self.a, size_output, 1.0, 0.0)
+            if self.is_a_prime_external:
+                self.a_prime = tf.placeholder(tf.int64, shape = [None], name='action_prime')
+                a_prime_one_hot = tf.one_hot(self.a_prime, size_output, 1.0, 0.0)
 
+        # DROPOUT PROBABILITY
         self.keep_prob = tf.placeholder(tf.float32)
-# dual activation version
+
+        # HIDDEN LAYERS
         hidden_prev = nn_dual_layer((self.s_norm, self.s_prime_norm), size_input, size_hidden[0], 'layer'+str(1) )
         with tf.name_scope('dropout'):
             hidden_prev = tf.nn.dropout(hidden_prev[0], self.keep_prob), tf.nn.dropout(hidden_prev[1], self.keep_prob)
@@ -250,11 +301,19 @@ class qnn:
             hidden_prev = dropped
             # no dropout for now
 
+        # self.is_a_prime_external = tf.placeholder(tf.bool)
         # q_all contains all the q values for all the actions
+
+        # OUTPUT LAYERS
         with tf.name_scope('output'):
             self.q_all, q_all_prime = nn_dual_layer(hidden, size_hidden[-1], size_output, 'layer'+str(len(size_hidden)+1), act=None)
-            q_prime_max = tf.stop_gradient(tf.reduce_max(q_all_prime, reduction_indices=[1]))
-            q_target = q_prime_max + self.r
+            if self.is_a_prime_external:
+                # SARSA
+                q_prime = tf.reduce_sum(tf.mul(q_all_prime, a_prime_one_hot), reduction_indices=[1])
+            else:
+                # Q-learning
+                q_prime = tf.reduce_max(q_all_prime, reduction_indices=[1])
+            q_target = tf.stop_gradient(q_prime) + self.r
             q_a = tf.reduce_sum(tf.mul(self.q_all, a_one_hot), reduction_indices=[1])
 
         with tf.name_scope('mean_squares_error'):
@@ -331,30 +390,37 @@ class qnn:
 
 
 
-    def train_batch(self, s, a, r, s_prime):
+    def train_batch(self, s, a, r, s_prime, a_prime=None):
 
         if (len(self.simple_batch_list) >= 10*self.batch_size) and (len(self.simple_batch_list) % self.batch_size == 0):
             # fill list
-            self.simple_batch_list.append((s,a,r,s_prime))
+            self.simple_batch_list.append((s,a,r,s_prime,a_prime))
 
             # sample random batch
             sample_idx = np.random.randint(0, len(self.simple_batch_list), [self.batch_size])
             batch = [self.simple_batch_list[i] for i in sample_idx]
 
             # train
-            states, actions, rewards, states_prime = zip(*batch)
+            states, actions, rewards, states_prime, actions_prime = zip(*batch)
             states = np.squeeze(np.array(states))
             actions = np.squeeze(np.array(actions))
             rewards = np.squeeze(np.array(rewards))
             states_prime = np.squeeze(np.array(states_prime))
+            actions_prime = np.squeeze(np.array(actions_prime))
 
-            feed_dict = {self.s: states, self.a: actions, self.r: rewards, self.s_prime: states_prime, self.keep_prob: 0.9, self.phase_train: True}
+            feed_dict = {self.s: states, self.a: actions, self.r: rewards, self.s_prime: states_prime,
+                         self.keep_prob: self.keep_prob_val,
+                         self.phase_train: True}
+            if self.is_a_prime_external:
+                feed_dict[self.a_prime] = actions_prime
+                # print(feed_dict)
+
             # train and write summary
             summary, _ = self.sess.run([self.summary_op, self.train_step], feed_dict=feed_dict)
             self.summary_writer.add_summary(summary, self.training_steps_count)
         else:
             # fill list
-            self.simple_batch_list.append((s,a,r,s_prime))
+            self.simple_batch_list.append((s,a,r,s_prime,a_prime))
             # print(self.simple_batch_list)
         # feed_dict = {self.s: s, self.a: a.astype(np.int64), self.r: r, self.s_prime: s_prime}
 

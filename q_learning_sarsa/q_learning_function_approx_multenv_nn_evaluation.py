@@ -29,7 +29,10 @@ class q_learning():
                  tile_resolution=10,
                  alpha_w=5e-4,
                  forget_rate=0.0,
-                 nn_size_hidden = [300,400,400]
+                 nn_size_hidden = [300,400,400],
+                 nn_batch_size = 50,
+                 nn_learning_rate = 1e-4,
+                 qnn_target = 'q-learning' # 'sarsa'
                  ):
 
         self.forget_rate = forget_rate
@@ -88,13 +91,21 @@ class q_learning():
 
         self.N_0 = N_0
 
+        if qnn_target == 'q-learning':
+            self.is_a_prime_external = False
+        elif qnn_target == 'sarsa':
+            self.is_a_prime_external = True
+        else:
+            throw('ValueError')
+        # simultaneous evaluation through neural network
+        self.qnn = qnn.qnn(self.statedim, self.num_actions, size_hidden=nn_size_hidden, batch_size=nn_batch_size, learning_rate=nn_learning_rate, is_a_prime_external=self.is_a_prime_external)
+
         print('N_0', self.N_0)
         print('lambda', self.lambda_)
         print('using environment', environment)
         print('tile resolution', self.tile_resolution)
+        print('qnn target', qnn_target, self.is_a_prime_external, self.qnn.is_a_prime_external)
 
-        # simultaneous evaluation through neural network
-        self.qnn = qnn.qnn(self.statedim, self.num_actions, size_hidden=nn_size_hidden)
 
     def get_tile_feature(self, state):
 
@@ -349,7 +360,12 @@ class q_learning():
                 #                episode.append((state, action, reward))
 
                 # evaluation alone, to test a neural network
-                self.qnn.train_batch(prev_state.reshape(1,-1), np.array(prev_action).reshape(-1), np.array(reward).reshape(-1), state.reshape(1,-1))
+                if not self.is_a_prime_external:
+                    # Q learning
+                    self.qnn.train_batch(prev_state.reshape(1,-1), np.array(prev_action).reshape(-1), np.array(reward).reshape(-1), state.reshape(1,-1))
+                else:
+                    # SARSA
+                    self.qnn.train_batch(prev_state.reshape(1,-1), np.array(prev_action).reshape(-1), np.array(reward).reshape(-1), state.reshape(1,-1), np.array(action).reshape(-1))
 
                 prev_state = state
                 prev_action = action
@@ -357,11 +373,11 @@ class q_learning():
                 if (done):
                     self.episode_lengths.append(count)
 
-            if (it + 1) % 10 == 0:
+            if (it + 1) % 100 == 0:
                 print("Episode %d" % (it))
                 if (done): print("Length %d" % (self.episode_lengths[-1]))
 
-            if (it + 1) % 50 == 0:
+            if (it + 1) % 100 == 0:
                 if self.select_env == 'MountainCar-v0':
                     # print('last w', self.w)
                     self.plot_deepQ_policy(mode='deterministic')
