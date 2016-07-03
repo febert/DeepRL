@@ -26,8 +26,11 @@ class q_learning():
                  lambda_=0.5,
                  algorithm='Q-learn',
                  tile_resolution=10,
-                 alpha_w=5e-4
+                 alpha_w=5e-4,
+                 forget_rate=0.0
                  ):
+
+        self.forget_rate = forget_rate
 
         self.alpha_w = alpha_w
 
@@ -240,7 +243,7 @@ class q_learning():
 
                 self.eligibiltiy_vector = self.eligibiltiy_vector * self.gamma * self.lambda_ + tile_features
 
-                self.w += self.alpha_w * delta_t * self.eligibiltiy_vector
+                self.w = (1-self.forget_rate)*self.w + self.alpha_w * delta_t * self.eligibiltiy_vector
 
                 prev_tile_features = tile_features
                 Qs = Qs_prime

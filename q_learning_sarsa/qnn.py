@@ -9,8 +9,8 @@ class qnn:
                  size_input,
                  size_output,
                  size_hidden = [300,400,400],
-                #  descent_method = 'adam',
-                 descent_method = 'grad',
+                 descent_method = 'adam',
+                #  descent_method = 'grad',
                  learning_rate = 1e-6,
                  batch_size = 50,
                  replay_memory = False):
@@ -43,6 +43,93 @@ class qnn:
                 tf.scalar_summary('max/' + name, tf.reduce_max(var))
                 tf.scalar_summary('min/' + name, tf.reduce_min(var))
                 tf.histogram_summary(name, var)
+
+        def batch_norm(x,shape_x, scope):
+            """
+            Batch normalization on convolutional maps.
+            Args:
+                x:           Tensor, 4D BHWD input maps
+                n_out:       integer, depth of input maps
+                scope:       string, variable scope
+            Return:
+                normed:      batch-normalized maps
+            """
+            with tf.variable_scope(scope):
+                beta = tf.Variable(tf.constant(0.0, shape=[shape_x]),
+                                             name='beta', trainable=True)
+                gamma = tf.Variable(tf.constant(1.0, shape=[shape_x]),
+                                              name='gamma', trainable=True)
+                # tf.histogram_summary('gamma', gamma)
+                batch_mean, batch_var = tf.nn.moments(x, axes= [0], name='moments')
+                # tf.scalar_summary('batch_mean', batch_mean)
+                # tf.scalar_summary('batch_var', batch_var)
+                ema = tf.train.ExponentialMovingAverage(decay=0.9)
+
+                def mean_var_with_update():
+                    ema_apply_op = ema.apply([batch_mean, batch_var])
+                    with tf.control_dependencies([ema_apply_op]):
+                        return tf.identity(batch_mean), tf.identity(batch_var)
+
+                # summary_batch_mean = ema.average(batch_mean)
+                # summary_var_mean = ema.average(batch_var)
+                # variable_summaries(summary_batch_mean, scope + '/batch_mean')
+                # variable_summaries(summary_var_mean, scope + '/batch_mean')
+
+                mean, var = tf.cond(self.phase_train,
+                                    mean_var_with_update,
+                                    lambda: (ema.average(batch_mean), ema.average(batch_var)))
+                names = tf.constant([scope + '/mean_x', scope + '/mean_v'])
+                tf.scalar_summary(names, mean)
+                # tf.scalar_summary('mean', mean)
+                # tf.scalar_summary('var', var)
+                normed = tf.nn.batch_normalization(x, mean, var, beta, gamma, 1e-3)
+
+            return normed, (mean, var, beta, gamma)
+
+        def dual_batch_norm(x,shape_x, scope):
+            """
+            Batch normalization on convolutional maps.
+            Args:
+                x:           Tensor, 4D BHWD input maps
+                n_out:       integer, depth of input maps
+                scope:       string, variable scope
+            Return:
+                normed:      batch-normalized maps
+            """
+            with tf.variable_scope(scope):
+                beta = tf.Variable(tf.constant(0.0, shape=[shape_x]),
+                                             name='beta', trainable=True)
+                gamma = tf.Variable(tf.constant(1.0, shape=[shape_x]),
+                                              name='gamma', trainable=True)
+                # tf.histogram_summary('gamma', gamma)
+                batch_mean, batch_var = tf.nn.moments(x, axes= [0], name='moments')
+                # tf.scalar_summary('batch_mean', batch_mean)
+                # tf.scalar_summary('batch_var', batch_var)
+                ema = tf.train.ExponentialMovingAverage(decay=0.9)
+
+                def mean_var_with_update():
+                    ema_apply_op = ema.apply([batch_mean, batch_var])
+                    with tf.control_dependencies([ema_apply_op]):
+                        return tf.identity(batch_mean), tf.identity(batch_var)
+
+                # summary_batch_mean = ema.average(batch_mean)
+                # summary_var_mean = ema.average(batch_var)
+                # variable_summaries(summary_batch_mean, scope + '/batch_mean')
+                # variable_summaries(summary_var_mean, scope + '/batch_mean')
+
+                mean, var = tf.cond(self.phase_train,
+                                    mean_var_with_update,
+                                    lambda: (ema.average(batch_mean), ema.average(batch_var)))
+                names = tf.constant([scope + '/mean_x', scope + '/mean_v'])
+                tf.scalar_summary(names, mean)
+                # tf.scalar_summary('mean', mean)
+                # tf.scalar_summary('var', var)
+                normed = tf.nn.batch_normalization(x, mean, var, beta, gamma, 1e-3)
+
+            return normed, (mean, var, beta, gamma)
+
+        # batch norm parameter
+        self.phase_train = tf.placeholder(tf.bool, name='phase_train')
 
         def nn_layer(input_tensor, input_dim, output_dim, layer_name, act=tf.nn.relu):
             """Reusable code for making a simple neural net layer.
@@ -136,6 +223,14 @@ class qnn:
             # self.variance = tf.Variabl(tf.constant(1.0, shape=[size_input]), trainable=False)
             # variable_summaries(self.variance, layer_name + '/batch_variance')
 
+            # self.s = tf.placeholder(tf.float32, shape = [None,size_input], name='s-input')
+            # self.s_norm, _ = batch_norm(self.s, size_input, 'batch_norm')
+            # self.s_prime = tf.placeholder(tf.float32, shape = [None,size_input], name='s_prime-input')
+            # self.s_prime_norm, _ = batch_norm(self.s_prime, size_input, 'batch_norm_prime')
+
+            # self.s = tf.placeholder(tf.float32, shape = [None,size_input], name='s-input')
+            # self.s_prime = tf.placeholder(tf.float32, shape = [None,size_input], name='s_prime-input')
+            # self.s_norm, self.s_prime_norm = dual_batch_norm((self.s, self.s_prime), size_input, 'batch_norm')
 
             # reward
             self.r = tf.placeholder(tf.float32, shape = [None], name='reward')
@@ -163,7 +258,7 @@ class qnn:
             q_a = tf.reduce_sum(tf.mul(self.q_all, a_one_hot), reduction_indices=[1])
 
         with tf.name_scope('mean_squares_error'):
-            mean_squares_error = tf.squeeze(tf.reduce_sum((q_target-q_a)**2))
+            mean_squares_error = tf.squeeze(tf.reduce_sum((q_target-q_a)**2) / tf.to_float(tf.shape(q_target)[0]))
             tf.scalar_summary('mean_squares_error', mean_squares_error)
 
         with tf.name_scope('train'):
@@ -190,47 +285,47 @@ class qnn:
 
 
 
-    def train_single_example(self, s, a, r, s_prime):
-        feed_dict = {self.s: s, self.a: a.astype(np.int64), self.r: r, self.s_prime: s_prime}
-
-        # every 10th iteration, save a summary
-        if self.training_steps_count % 10 == 0:
-            # summary, _ = self.sess.run([self.summary_op, self.train_step], feed_dict=feed_dict)
-            summary, _ = self.sess.run([self.summary_op, self.train_step], feed_dict=feed_dict)
-            self.summary_writer.add_summary(summary, self.training_steps_count)
-        # run train only, without summary
-        else:
-            self.sess.run(self.train_step, feed_dict=feed_dict)
-
-        self.training_steps_count += 1
-
-
-
-
-
-    def train_wait_for_batch(self, s, a, r, s_prime):
-
-        if len(self.simple_batch_list) == self.batch_size:
-            states, actions, rewards, states_prime = zip(*self.simple_batch_list)
-            states = np.squeeze(np.array(states))
-            actions = np.squeeze(np.array(actions))
-            rewards = np.squeeze(np.array(rewards))
-            states_prime = np.squeeze(np.array(states_prime))
-
-            feed_dict = {self.s: states, self.a: actions, self.r: rewards, self.s_prime: states_prime}
-            # train and write summary
-            summary, _ = self.sess.run([self.summary_op, self.train_step], feed_dict=feed_dict)
-            self.summary_writer.add_summary(summary, self.training_steps_count)
-
-            # reset batch list
-            self.simple_batch_list = []
-        else:
-            # fill list
-            self.simple_batch_list.append((s,a,r,s_prime))
-            # print(self.simple_batch_list)
-        # feed_dict = {self.s: s, self.a: a.astype(np.int64), self.r: r, self.s_prime: s_prime}
-
-        self.training_steps_count += 1
+    # def train_single_example(self, s, a, r, s_prime):
+    #     feed_dict = {self.s: s, self.a: a.astype(np.int64), self.r: r, self.s_prime: s_prime}
+    #
+    #     # every 10th iteration, save a summary
+    #     if self.training_steps_count % 10 == 0:
+    #         # summary, _ = self.sess.run([self.summary_op, self.train_step], feed_dict=feed_dict)
+    #         summary, _ = self.sess.run([self.summary_op, self.train_step], feed_dict=feed_dict)
+    #         self.summary_writer.add_summary(summary, self.training_steps_count)
+    #     # run train only, without summary
+    #     else:
+    #         self.sess.run(self.train_step, feed_dict=feed_dict)
+    #
+    #     self.training_steps_count += 1
+    #
+    #
+    #
+    #
+    #
+    # def train_wait_for_batch(self, s, a, r, s_prime):
+    #
+    #     if len(self.simple_batch_list) == self.batch_size:
+    #         states, actions, rewards, states_prime = zip(*self.simple_batch_list)
+    #         states = np.squeeze(np.array(states))
+    #         actions = np.squeeze(np.array(actions))
+    #         rewards = np.squeeze(np.array(rewards))
+    #         states_prime = np.squeeze(np.array(states_prime))
+    #
+    #         feed_dict = {self.s: states, self.a: actions, self.r: rewards, self.s_prime: states_prime}
+    #         # train and write summary
+    #         summary, _ = self.sess.run([self.summary_op, self.train_step], feed_dict=feed_dict)
+    #         self.summary_writer.add_summary(summary, self.training_steps_count)
+    #
+    #         # reset batch list
+    #         self.simple_batch_list = []
+    #     else:
+    #         # fill list
+    #         self.simple_batch_list.append((s,a,r,s_prime))
+    #         # print(self.simple_batch_list)
+    #     # feed_dict = {self.s: s, self.a: a.astype(np.int64), self.r: r, self.s_prime: s_prime}
+    #
+    #     self.training_steps_count += 1
 
 
 
@@ -253,7 +348,7 @@ class qnn:
             rewards = np.squeeze(np.array(rewards))
             states_prime = np.squeeze(np.array(states_prime))
 
-            feed_dict = {self.s: states, self.a: actions, self.r: rewards, self.s_prime: states_prime, self.keep_prob: 0.9}
+            feed_dict = {self.s: states, self.a: actions, self.r: rewards, self.s_prime: states_prime, self.keep_prob: 0.9, self.phase_train: True}
             # train and write summary
             summary, _ = self.sess.run([self.summary_op, self.train_step], feed_dict=feed_dict)
             self.summary_writer.add_summary(summary, self.training_steps_count)
@@ -271,7 +366,7 @@ class qnn:
 
     def evaluate_all_actions(self, states):
         # print(states, states.shape)
-        feed_dict = {self.s: states, self.keep_prob: 1.0}
+        feed_dict = {self.s: states, self.keep_prob: 1.0, self.phase_train: False}
         return self.sess.run(self.q_all, feed_dict=feed_dict)
 
     # this does not seem to work
