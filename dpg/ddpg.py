@@ -34,29 +34,33 @@ class ddpg():
         self.input_high = input_high
         self.input_low = input_low
 
+        self.gamma = 0.9
+
         self.sigma = np.identity(2)*0.5
 
+
         self.num_outputs = 1
-        self.num_inputs = 2
+        self.action_dim = 1
+        self.state_dim = 2
         self.batchsize = 50
 
         self.sess = tf.InteractiveSession()
         self.num_neurons_layer1 = 100
         self.num_neurons_layer2 = 100
 
-        # parameteres for network training
-        batchsize = 50
-        self.batch_train_data = np.zeros((batchsize, 2))
-        self.batch_labels = np.zeros(batchsize).reshape((batchsize, 1))
-        self.batchindex = 0
 
         self.step = 0
 
-        self.summaries_dir = './regressiontest/batchnorm'
+        self.summaries_dir = './regressiontest/ddpg'
 
         self.max_replay_size = 1e3 #number of minibatch transition to be stored in replay buffer
 
+        self.episode_lengths = []
+        self.test_lengths = []
 
+        self.replay_memory = []
+
+        # environment specific:
         self.env = gym.make(environment)
         self.select_env = environment
 
@@ -64,20 +68,9 @@ class ddpg():
         print('action limits', self.action_limits)
         actionmean = (self.action_limits[0]+ self.action_limits[1])/2
 
-        self.episode_lengths = []
-        self.test_lengths = []
 
-    def add_to_replay(self, state, mu):
 
-        self.batch_train_data[self.batchindex, :] = state
-        self.batch_labels[self.batchindex] = mu
-        self.batchindex += 1
-
-        if self.batchindex == 50:
-            self.batchindex = 0
-            self.pefrom_train_step()
-
-    def plot_learned_function(self):
+    def plot_learned_mu(self):
 
         print('plotting the mu() policy learned by NN')
 
@@ -92,7 +85,7 @@ class ddpg():
         for i, x in enumerate(x_range):
             for j, v in enumerate(v_range):
                 x_ = np.array([x,v],dtype=np.float32).reshape((1,2))
-                vals[j,i]= self.eval_trained_function(x_)[0]
+                vals[j,i]= self.mu(x_)[0]
 
         fig = plt.figure()
 
@@ -129,7 +122,7 @@ class ddpg():
 
             state_prime, reward, done, info = self.env.step(action)
 
-            self.add_to_replay(state, action, reward, state_prime)
+            self.replay_memory.append((state, action, reward, state_prime))
             state = state_prime
 
             if it > 0 or count > 100*self.batchsize:
@@ -192,8 +185,9 @@ class ddpg():
 
         # Input placehoolders
         with tf.name_scope('input'):
-            self.x = tf.placeholder(tf.float32, [None, self.num_inputs], name='x-input')
-            self.y_ = tf.placeholder(tf.float32, [None, self.num_outputs], name='y-input')
+            self.x_state = tf.placeholder(tf.float32, [None, self.state_dim], name='x-input')
+            self.x_action = tf.placeholder(tf.float32, [None, self.action_dim], name='x-input')
+            self.y_qtargets = tf.placeholder(tf.float32, [None, self.num_outputs], name='y-input')
 
         # We can't initialize these variables to 0 - the network will get stuck.
         def weight_variable(shape):
@@ -237,7 +231,7 @@ class ddpg():
                     tf.histogram_summary(layer_name + '/activations', self.activations)
 
                     self.ema = tf.train.ExponentialMovingAverage(decay=0.9)
-                    self.ema = self.ema.apply([self.weights,self.biases])
+                    self.ema_ap_op = self.ema.apply([self.weights,self.biases])
 
             def make_nn_layer(self):
                 return self.activations
@@ -263,43 +257,84 @@ class ddpg():
             def make_nn_layer(self):
                 return self.activations
 
+
         with tf.name_scope('mu_net'):
 
             with tf.name_scope('hidden_1'):
-                n1 = nn_layer(self.x, self.num_inputs, self.num_neurons_layer1, 'layer1')
+                n1 = nn_layer(self.x_state, self.state_dim, self.num_neurons_layer1, 'layer1')
                 a1 = n1.make_nn_layer()
 
             with tf.name_scope('hidden_2'):
                 n2 = nn_layer(a1, self.num_neurons_layer1, self.num_neurons_layer2, 'layer2')
                 a2 = n2.make_nn_layer()
 
-            self.y_mu = nn_layer(a2, self.num_neurons_layer2, self.num_outputs, 'layer3', act=tf.identity)
+            n3 = nn_layer(a2, self.num_neurons_layer2, self.num_outputs,layer_name= 'layer3', act=tf.identity)
+            self.y_mu = n3.make_nn_layer()
+
 
         with tf.name_scope('mu_net_prime'):
 
             with tf.name_scope('hidden_1'):
-                n1_prime = nn_layer_prime(self.x, n1,self.num_inputs, self.num_neurons_layer1, 'layer1')
+                n1_prime = nn_layer_prime(self.x_state, n1, self.state_dim, self.num_neurons_layer1, 'layer1')
                 a1_prime = n1_prime.make_nn_layer()
 
             with tf.name_scope('hidden_2'):
                 n2_prime = nn_layer_prime(a1_prime, n2, self.num_neurons_layer1, self.num_neurons_layer2, 'layer2')
-                a2_primnn_layer = n2.make_nn_layer()
+                a2_prime = n2_prime.make_nn_layer()
 
-            self.y_mu_prime = nn_layer(a2_primnn_layer, self.num_neurons_layer2, self.num_outputs, 'layer3', act=tf.identity)
+            n3_prime= nn_layer_prime(a2_prime,n3, self.num_neurons_layer2, self.num_outputs, 'layer3', act=tf.identity)
+            self.y_mu_prime = n3_prime.make_nn_layer()
 
+        x_stateaction = tf.concat(1, [self.x_state, self.x_action], name='concat')
+        with tf.name_scope('Q_net'):
 
+            with tf.name_scope('hidden_1'):
+                n1q = nn_layer(x_stateaction, self.state_dim + self.action_dim, self.num_neurons_layer1, 'layer1')
+                a1q = n1q.make_nn_layer()
+
+            with tf.name_scope('hidden_2'):
+                n2q = nn_layer(a1q, self.num_neurons_layer1, self.num_neurons_layer2, 'layer2')
+                a2q = n2q.make_nn_layer()
+
+            n3q = nn_layer(a2q, self.num_neurons_layer2, self.num_outputs,layer_name= 'layer3', act=tf.identity)
+            self.y_q = n3q.make_nn_layer()
+
+        with tf.name_scope('Q_net_prime'):
+
+            with tf.name_scope('hidden_1'):
+                n1_primeq = nn_layer_prime(x_stateaction, n1q, self.state_dim + self.action_dim, self.num_neurons_layer1, 'layer1')
+                a1_primeq = n1_primeq.make_nn_layer()
+
+            with tf.name_scope('hidden_2'):
+                n2_primeq = nn_layer_prime(a1_primeq, n2q, self.num_neurons_layer1, self.num_neurons_layer2, 'layer2')
+                a2_primeq = n2_primeq.make_nn_layer()
+
+            n3_primeq= nn_layer_prime(a2_primeq,n3, self.num_neurons_layer2, self.num_outputs, 'layer3', act=tf.identity)
+            self.y_q_prime = n3_primeq.make_nn_layer()
 
         with tf.name_scope('mse'):
-            squ_diff = tf.pow(self.y_- self.y, 2)
+            squ_diff = tf.pow(self.y_qtargets - self.y_q, 2)
             with tf.name_scope('total'):
                 self.mean_squared_error = tf.reduce_mean(squ_diff)
             tf.scalar_summary('mean squared error', self.mean_squared_error)
 
 
+        self.learning_rate_actor = tf.placeholder(tf.float32, shape= [], name='learning_rate')
+        self.learning_rate_critic = tf.placeholder(tf.float32, shape= [], name='learning_rate')
 
-        self.learning_rate = tf.placeholder(tf.float32, shape= [], name='learning_rate')
         with tf.name_scope('train'):
-            self.train_step = tf.train.AdamOptimizer(self.learning_rate).minimize(self.mean_squared_error)
+            self.qtrain_step = tf.train.AdamOptimizer(self.learning_rate_critic).minimize(self.mean_squared_error)
+
+        opt = tf.train.AdamOptimizer(self.learning_rate_actor)
+        var_list = [n1q.weights,n1q.biases,n2q.weights,n2q.biases,n3q.weights,n3q.biases]   #these are all variables from the Q-network
+        var_grad = tf.gradients(self.y_q, var_list)
+        dQda = tf.gradients(self.y_q, self.x_action)
+        var_grad_multiplied = [tf.matmul(dQda, var_grad[i]) for i in var_grad]
+        grads_and_vars = zip(var_grad_multiplied, var_list)
+
+        ema_updates = [n1.ema_ap_op, n2.ema_ap_op, n3.ema_ap_op, n1q.ema_ap_op, n2q.ema_ap_op, n3q.ema_ap_op]
+        with tf.control_dependencies(ema_updates+self.qtrain_step):
+            self.mu_train_step = opt.apply_gradients(grads_and_vars)
 
 
         # Merge all the summaries and write them out to /tmp/mnist_logs (by default)
@@ -309,26 +344,39 @@ class ddpg():
 
     def get_train_batch(self):
 
-        #getting random transition from the replay memory:
-        indices = np.random.choice(self.replay_size)
+        #selecting transitions randomly from the replay memory:
+        indices = np.random.choice(len(self.replay_memory), self.batchsize, replace= False)
+        transition_batch = [self.replay_memory[i] for i in indices]
 
-        for i in range(self.batchsize):
+        states = np.asarray([transition_batch[i][0] for i in range])
+        actions = np.asarray([transition_batch[i][1] for i in range])
+        rewards = np.asarray([transition_batch[i][2] for i in range])
+        states_prime = np.asarray([transition_batch[i][3] for i in range])
 
+        states_prime_actions = np.concatenate((states_prime,actions),axis=1)
+        Qprime = self.eval_Qnet_prime(states_prime_actions)
+        targets = rewards + self.gamma * Qprime
 
+        return states, actions, targets
 
     def train_networks(self):
 
-        l_r = 1e-3
+        l_r_actor = 1e-4
+        l_r_critic = 1e-3
 
         def feed_dict():
 
-            xs, ys = self.get_train_batch()
+            xs_state, xs_action, y_qtargets = self.get_train_batch()
 
-            ys = self.batch_labels
+            return {self.x_state: xs_state,
+                    self.x_action: xs_action,
+                    self.y_qtargets: y_qtargets,
+                    self.learning_rate_actor: l_r_actor,
+                    self.learning_rate_critic: l_r_critic,
+                    }
 
-            return {self.x: xs, self.y_: ys, self.learning_rate: l_r}
-
-        summary, _, mse_val = self.sess.run([self.merged, self.train_step, self.mean_squared_error],feed_dict=feed_dict())
+        dict_ = feed_dict()
+        summary, _, mse_val = self.sess.run([self.merged, self.mu_train_step, self.mean_squared_error], feed_dict= dict_)
 
         if self.step % 10 == 0:
             self.train_writer.add_summary(summary, self.step)
@@ -337,30 +385,34 @@ class ddpg():
 
         if self.step % 500 == 0:
             print('result after minibatch no. {} : mean squared error: {}'.format(self.step, mse_val))
-            print('batch train data', self.batch_train_data)
-            print('batch train labels', self.batch_labels)
-            self.plot_learned_function()
+            print('batch train data states', dict_[self.x_state])
+            print('batch train data actions', dict_[self.x_action])
+            print('batch train data actions', dict_[self.y_qtargets])
+            self.plot_learned_mu()
 
             num_steps= self.test_learned_policy()
             print('episode length using learned policy:',num_steps)
 
     def mu(self, input):
-        return self.y.eval(feed_dict= {self.x : input ,self.phase_train: False})
+        return self.y_mu.eval(feed_dict= {self.x_state : input})
 
-    def q(self, input):
-        return self.y.eval(feed_dict= {self.x : input ,self.phase_train: False})
+    def mu_prime(self, input):
+        return self.y_mu_prime.eval(feed_dict= {self.x_state : input})
 
-    def test_learned_policy(self, limit=20000, enable_render=False):
+    def eval_Qnet_prime(self, input):
+        return self.y_q_prime.eval(feed_dict= {self.x_state : input})
+
+    def test_learned_policy(self, limit=10000, enable_render=False):
 
         def apply_limits(action):
-            if action < self.car1.action_limits[0]:
-                action = self.car1.action_limits[0]
-            if action > self.car1.action_limits[1]:
-                action = self.car1.action_limits[1]
+            if action < self.env.action_limits[0]:
+                action = self.env.action_limits[0]
+            if action > self.env.action_limits[1]:
+                action = self.env.action_limits[1]
             return action
 
         episode = []
-        state = self.car1.env.reset()
+        state = self.env.reset()
 
         count = 0
         done = False
@@ -373,14 +425,14 @@ class ddpg():
             count += 1
 
             print('state',state)
-            action = self.eval_trained_function(state.reshape((1,2)))[0]
+            action = self.mu(state.reshape((1,2)))[0]
             print(action)
             action = apply_limits(action)
 
-            state, reward, done, info = self.car1.env.step(action)
+            state, reward, done, info = self.env.step(action)
 
             if enable_render:
-                self.car1.env.render()
+                self.env.render()
                 # print("step no. {}".format(count))
 
         return count
@@ -391,3 +443,6 @@ class ddpg():
         tf.gfile.MakeDirs(self.summaries_dir)
 
         self.initialize_training(self.sess)
+
+
+

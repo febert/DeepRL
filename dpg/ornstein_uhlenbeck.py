@@ -26,7 +26,7 @@ class ornstein_uhlenbeck():
 
 if __name__ == '__main__':
 
-        ou1 = ornstein_uhlenbeck(ndim= 1, theta= 0.15, sigma= .3, delta_t= .001)
+        ou1 = ornstein_uhlenbeck(ndim= 1, theta= 0.15, sigma= .3, delta_t= .01)
 
         nsample = 1000
         ou1vals = np.zeros(nsample)
