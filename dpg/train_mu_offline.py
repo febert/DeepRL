@@ -7,24 +7,28 @@ np.set_printoptions(threshold=np.inf)
 
 
 from nn import nn
-# from nn_batchnorm import nn_batchnorm
+from nn_batchnorm import nn_batchnorm
 
 class mu_offline_training():
 
-    def __init__(self):
+    def __init__(self, use_batchnorm = True):
 
-        self.num_sgd_updates = 20000
+        self.num_sgd_updates = 3000
 
         # create neural network:
-        # self.nn1 = nn_batchnorm()
-        self.nn1 = nn()
-        self.nn1.main()
-
         self.car1 = moutaincar_dpg.mountaincar_dpg()
         self.car1.loaddata('dpg_mountain_car_iter250')
         self.car1.plot_policy(mode= 'deterministic')
 
-        self.theta = self.car1.theta
+        obs_low = self.car1.env.observation_space.low
+        obs_high = self.car1.env.observation_space.high
+
+        if use_batchnorm:
+            self.nn1 = nn_batchnorm(input_low= obs_low, input_high= obs_high, car= self.car1)
+        else:
+            self.nn1 = nn(input_low= obs_low, input_high= obs_high, car= self.car1)
+
+        self.nn1.main()
 
     def start_training(self):
         obs_low = self.car1.env.observation_space.low
@@ -38,5 +42,5 @@ class mu_offline_training():
 
 if __name__ == '__main__':
 
-    t1 = mu_offline_training()
+    t1 = mu_offline_training(use_batchnorm= True)
     t1.start_training()

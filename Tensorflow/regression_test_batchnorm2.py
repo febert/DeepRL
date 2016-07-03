@@ -10,8 +10,6 @@ from tensorflow.examples.tutorials.mnist import input_data
 flags = tf.app.flags
 FLAGS = flags.FLAGS
 
-flags.DEFINE_string('summaries_dir', './regressiontest/regression_batchnormalized', 'Summaries directory')
-
 import numpy as np
 
 np.set_printoptions(threshold=np.inf)
@@ -55,8 +53,6 @@ class regression_test():
         def func1(input, mu, sig):
             delta = input - mu
             return np.exp(-0.5*delta.dot(np.linalg.inv(sig)).dot(delta)) / np.sqrt(2*np.pi*np.linalg.det(sig))
-
-
 
         if addnoise:
             noise = np.random.randn(1) * 0.1
@@ -214,24 +210,32 @@ class regression_test():
                                              name='beta', trainable=True)
                 gamma = tf.Variable(tf.constant(1.0, shape=[shape_x]),
                                               name='gamma', trainable=True)
-                batch_mean, batch_var = tf.nn.moments(x, axes= [0], name='moments')
+
+                self.mean = tf.Variable(tf.constant(0.0, shape=[shape_x]), trainable=False)
+                self.variance = tf.Variable(tf.constant(1.0, shape=[shape_x]), trainable=False)
+
+                mean, var = tf.nn.moments(x, axes= [0], name='moments')
                 ema = tf.train.ExponentialMovingAverage(decay=0.9)
 
+                assign_mean = self.mean.assign(mean)
+                assign_variance = self.variance.assign(var)
+
+                assignments = tf.group(assign_mean, assign_variance)
+
                 def mean_var_with_update():
-                    ema_apply_op = ema.apply([batch_mean, batch_var])
+                    with tf.control_dependencies([assignments]):
+                        ema_apply_op = ema.apply([self.mean, self.variance])
+                        with tf.control_dependencies([ema_apply_op]):
+                            return tf.identity(self.mean), tf.identity(self.variance)
 
-                    with tf.control_dependencies([ema_apply_op]):
-                        mean_moving_avg, var_moving_avg = ema.average(batch_mean), ema.average(batch_var)
-                        variable_summaries(mean_moving_avg, scope + '/mean_moving_avg')
-                        variable_summaries(var_moving_avg, scope + '/var_moving_avg')
-                        return tf.identity(batch_mean), tf.identity(batch_var)
+                variable_summaries(self.mean, scope + '/mean_moving_avg')
+                variable_summaries(self.variance, scope + '/var_moving_avg')
 
-                mean, var = tf.cond(self.phase_train,
+                mean_cond, var_cond = tf.cond(self.phase_train,
                                     mean_var_with_update,
-                                    lambda: (ema.average(batch_mean), ema.average(batch_var)))
+                                    lambda: (ema.average(self.mean), ema.average(self.variance)))
 
-
-                normed = tf.nn.batch_normalization(x, mean, var, beta, gamma, 1e-3)
+                normed = tf.nn.batch_normalization(x, mean_cond, var_cond, beta, gamma, 1e-3)
 
             return normed, mean, var, beta, gamma
 
@@ -263,8 +267,8 @@ class regression_test():
 
         # Merge all the summaries and write them out to /tmp/mnist_logs (by default)
         merged = tf.merge_all_summaries()
-        train_writer = tf.train.SummaryWriter(FLAGS.summaries_dir + '/train', sess.graph)
-        test_writer = tf.train.SummaryWriter(FLAGS.summaries_dir + '/test')
+        train_writer = tf.train.SummaryWriter(self.summaries_dir + '/train', sess.graph)
+        test_writer = tf.train.SummaryWriter(self.summaries_dir + '/test')
         tf.initialize_all_variables().run()
 
         # Train the model, and also write summaries.
@@ -299,30 +303,32 @@ class regression_test():
                     test_writer.add_summary(summary, step + epoch*steps_per_epoch)
                     print('mean_squared_error at step %s: %s' % (step + epoch*steps_per_epoch, acc))
 
-                    print('input data:',tmpdict[self.x])
+                    # print('input data:',tmpdict[self.x])
                     print('mean', r_mean)
                     print('var', r_var)
                     print('beta', r_beta)
                     print('gamma', r_gamma)
 
-                    print('retrieve xbn:', retrive_xbn)
+                    # print('retrieve xbn:', retrive_xbn)
 
                 else:  # Record train set summaries, and train
                     tmpdict = feed_dict(if_train= True)
                     tmpdict[learning_rate] = l_r
-                    summary, _ , r_y, retrive_xbn, r_mean, r_var, r_beta, r_gamma = sess.run([merged, train_step, self.y, x_bn,mean, var, beta, gamma],feed_dict=tmpdict)
+                    summary, _ , acc, r_y, retrive_xbn, r_mean, r_var, r_beta, r_gamma = sess.run([merged, train_step, mean_squared_error, self.y, x_bn,mean, var, beta, gamma],feed_dict=tmpdict)
                     train_writer.add_summary(summary, step + epoch*steps_per_epoch)
 
+                    print('training mean_squared_error at step %s: %s' % (step + epoch*steps_per_epoch, acc))
+
                     # print('input data train:',tmpdict[self.x])
-                    # print('output data',  r_y)
-                    # print('mean', r_mean)
-                    # print('var', r_var)
-                    # print('beta', r_beta)
-                    # print('gamma', r_gamma)
-                    #
+                    print('output data',  r_y)
+                    print('mean', r_mean)
+                    print('var', r_var)
+                    print('beta', r_beta)
+                    print('gamma', r_gamma)
+
                     # print('retrieve xbn:', retrive_xbn)
 
-                if (step + epoch*steps_per_epoch) %500 == 0:
+                if (step + epoch*steps_per_epoch) %5 == 0:
                     self.plot_learned_function()
                     self.plot_target_function()
 
