@@ -2,6 +2,7 @@ from __future__ import print_function
 
 import tensorflow as tf
 import numpy as np
+from collections import deque
 
 class qnn:
 
@@ -9,13 +10,15 @@ class qnn:
                  size_input,
                  size_output,
                  size_hidden = [300,400,400],
-                 descent_method = 'adam',
-                #  descent_method = 'grad',
+                #  descent_method = 'adam',
+                 descent_method = 'grad',
+                #  descent_method = 'rmsprop',
                  learning_rate = 1e-4,
                  batch_size = 50,
                  replay_memory = False,
                  keep_prob_val = 1.0,
-                 is_a_prime_external = False):
+                 is_a_prime_external = False,
+                 replay_memory_size = 1e6):
 
         self.is_a_prime_external = is_a_prime_external # This means SARSA instead of Q-learning
         self.keep_prob_val = keep_prob_val
@@ -204,47 +207,47 @@ class qnn:
                         tf.histogram_summary(layer_name + '/activations_s_prime', activations_s_prime)
                     return (activations_s, activations_s_prime)
 
-        # def nn_dual_layer_with_decay(input_tensor_list, input_dim, output_dim, layer_name, act=tf.nn.relu, decay=0.999):
-        #     """Create a layer with two different inputs and two different outputs
-        #        calculated with the same weights. Thought for Q_learning training.
-        #
-        #     It does a matrix multiply, bias add, and then uses relu to nonlinearize.
-        #     It also sets up name scoping so that the resultant graph is easy to read,
-        #     and adds a number of summary ops.
-        #     """
-        #     # Adding a name scope ensures logical grouping of the layers in the graph.
-        #     with tf.name_scope(layer_name):
-        #         # This Variable will hold the state of the weights for the layer
-        #         with tf.name_scope('weights'):
-        #             weights = weight_variable([input_dim, output_dim])
-        #             variable_summaries(weights, layer_name + '/weights')
-        #         with tf.name_scope('biases'):
-        #             biases = bias_variable([output_dim])
-        #             variable_summaries(biases, layer_name + '/biases')
-        #         # prime network uses a moving average of the main network
-        #         self.ema = tf.train.ExponentialMovingAverage(decay=decay)
-        #         self.ema = self.ema.apply([weights,biases])
-        #         # if it is not the last layer
-        #         if act is not None:
-        #             with tf.name_scope('Wx_plus_b'):
-        #                 preactivate_s = tf.matmul(input_tensor_list[0], weights) + biases
-        #                 tf.histogram_summary(layer_name + '/pre_activations_s', preactivate_s)
-        #                 preactivate_s_prime = tf.matmul(input_tensor_list[1], weights) + biases
-        #                 tf.histogram_summary(layer_name + '/pre_activations_s_prime', preactivate_s_prime)
-        #             activations_s = act(preactivate_s, 'activation_s')
-        #             tf.histogram_summary(layer_name + '/activations_s', activations_s)
-        #             activations_s_prime = act(preactivate_s_prime, 'activation_s_prime')
-        #             tf.histogram_summary(layer_name + '/activations_s_prime', activations_s_prime)
-        #             return (activations_s, activations_s_prime)
-        #         # if it is the last layer
-        #         else:
-        #             with tf.name_scope('Wx_plus_b'):
-        #                 activations_s = tf.matmul(input_tensor_list[0], weights) + biases
-        #                 tf.histogram_summary(layer_name + '/activations_s', activations_s)
-        #                 activations_s_prime = tf.matmul(input_tensor_list[1], weights) + biases
-        #                 tf.histogram_summary(layer_name + '/activations_s_prime', activations_s_prime)
-        #             return (activations_s, activations_s_prime)
-        #
+        def nn_dual_layer_with_decay(input_tensor_list, input_dim, output_dim, layer_name, ema_ops_list, act=tf.nn.relu, decay=0.999):
+            """Create a layer with two different inputs and two different outputs
+               calculated with the same weights. Thought for Q_learning training.
+
+            It does a matrix multiply, bias add, and then uses relu to nonlinearize.
+            It also sets up name scoping so that the resultant graph is easy to read,
+            and adds a number of summary ops.
+            """
+            # Adding a name scope ensures logical grouping of the layers in the graph.
+            with tf.name_scope(layer_name):
+                # This Variable will hold the state of the weights for the layer
+                with tf.name_scope('weights'):
+                    weights = weight_variable([input_dim, output_dim])
+                    variable_summaries(weights, layer_name + '/weights')
+                with tf.name_scope('biases'):
+                    biases = bias_variable([output_dim])
+                    variable_summaries(biases, layer_name + '/biases')
+                # prime network uses a moving average of the main network
+                ema = tf.train.ExponentialMovingAverage(decay=decay)
+                ema_ops_list.append(ema.apply([weights,biases]))
+                # if it is not the last layer
+                if act is not None:
+                    with tf.name_scope('Wx_plus_b'):
+                        preactivate_s = tf.matmul(input_tensor_list[0], weights) + biases
+                        tf.histogram_summary(layer_name + '/pre_activations_s', preactivate_s)
+                        preactivate_s_prime = tf.matmul(input_tensor_list[1], ema.average(weights)) + biases
+                        tf.histogram_summary(layer_name + '/pre_activations_s_prime', preactivate_s_prime)
+                    activations_s = act(preactivate_s, 'activation_s')
+                    tf.histogram_summary(layer_name + '/activations_s', activations_s)
+                    activations_s_prime = act(preactivate_s_prime, 'activation_s_prime')
+                    tf.histogram_summary(layer_name + '/activations_s_prime', activations_s_prime)
+                    return (activations_s, activations_s_prime)
+                # if it is the last layer
+                else:
+                    with tf.name_scope('Wx_plus_b'):
+                        activations_s = tf.matmul(input_tensor_list[0], weights) + biases
+                        tf.histogram_summary(layer_name + '/activations_s', activations_s)
+                        activations_s_prime = tf.matmul(input_tensor_list[1], ema.average(weights)) + biases
+                        tf.histogram_summary(layer_name + '/activations_s_prime', activations_s_prime)
+                    return (activations_s, activations_s_prime)
+
 
         # NORMALIZE INPUT
         with tf.name_scope('input'):
@@ -290,12 +293,15 @@ class qnn:
         # DROPOUT PROBABILITY
         self.keep_prob = tf.placeholder(tf.float32)
 
+        # EXPONENTIAL MOVING AVERAGE FOR WEIGHTS
+        ema_ops_list = []
+
         # HIDDEN LAYERS
-        hidden_prev = nn_dual_layer((self.s_norm, self.s_prime_norm), size_input, size_hidden[0], 'layer'+str(1) )
+        hidden_prev = nn_dual_layer_with_decay((self.s_norm, self.s_prime_norm), size_input, size_hidden[0], 'layer'+str(1), ema_ops_list)
         with tf.name_scope('dropout'):
             hidden_prev = tf.nn.dropout(hidden_prev[0], self.keep_prob), tf.nn.dropout(hidden_prev[1], self.keep_prob)
         for idx in range(1, len(size_hidden) ):
-            hidden = nn_dual_layer(hidden_prev, size_hidden[idx-1], size_hidden[idx], 'layer'+str(idx+1))
+            hidden = nn_dual_layer_with_decay(hidden_prev, size_hidden[idx-1], size_hidden[idx], 'layer'+str(idx+1), ema_ops_list)
             with tf.name_scope('dropout'):
                 dropped = tf.nn.dropout(hidden[0], self.keep_prob), tf.nn.dropout(hidden[1], self.keep_prob)
             hidden_prev = dropped
@@ -306,7 +312,7 @@ class qnn:
 
         # OUTPUT LAYERS
         with tf.name_scope('output'):
-            self.q_all, q_all_prime = nn_dual_layer(hidden, size_hidden[-1], size_output, 'layer'+str(len(size_hidden)+1), act=None)
+            self.q_all, q_all_prime = nn_dual_layer_with_decay(hidden_prev, size_hidden[-1], size_output, 'layer'+str(len(size_hidden)+1), ema_ops_list, act=None)
             if self.is_a_prime_external:
                 # SARSA
                 q_prime = tf.reduce_sum(tf.mul(q_all_prime, a_prime_one_hot), reduction_indices=[1])
@@ -318,15 +324,19 @@ class qnn:
 
         with tf.name_scope('mean_squares_error'):
             mean_squares_error = tf.squeeze(tf.reduce_sum((q_target-q_a)**2) / tf.to_float(tf.shape(q_target)[0]))
-            tf.scalar_summary('mean_squares_error', mean_squares_error)
+            tf.scalar_summary('log_mean_squares_error', tf.log(mean_squares_error))
 
         with tf.name_scope('train'):
             # self.learning_rate = tf.placeholder(tf.float32, shape=[])
             self.learning_rate = tf.constant(learning_rate)
-            if descent_method == 'adam':
-                self.train_step = tf.train.AdamOptimizer(self.learning_rate).minimize(mean_squares_error)
-            elif descent_method == 'grad':
-                self.train_step = tf.train.GradientDescentOptimizer(self.learning_rate).minimize(mean_squares_error)
+            with tf.control_dependencies(ema_ops_list):
+                if descent_method == 'adam':
+                    self.train_step = tf.train.AdamOptimizer(self.learning_rate).minimize(mean_squares_error)
+                elif descent_method == 'grad':
+                    self.train_step = tf.train.GradientDescentOptimizer(self.learning_rate).minimize(mean_squares_error)
+                elif descent_method == 'rmsprop':
+                    self.train_step = tf.train.RMSPropOptimizer(self.learning_rate, decay=0.95, momentum=0.95, epsilon=1e-2).minimize(mean_squares_error)
+
 
         self.summary_op = tf.merge_all_summaries()
 
@@ -337,7 +347,8 @@ class qnn:
 
         self.training_steps_count = 0
 
-        self.simple_batch_list = []
+        # self.simple_batch_list = []
+        self.replay_memory = deque(maxlen=replay_memory_size)
 
 
 
@@ -392,13 +403,13 @@ class qnn:
 
     def train_batch(self, s, a, r, s_prime, a_prime=None):
 
-        if (len(self.simple_batch_list) >= 10*self.batch_size) and (len(self.simple_batch_list) % self.batch_size == 0):
+        if (len(self.replay_memory) >= 1e3*self.batch_size) and (self.training_steps_count % self.batch_size == 0):
             # fill list
-            self.simple_batch_list.append((s,a,r,s_prime,a_prime))
+            self.replay_memory.append((s,a,r,s_prime,a_prime))
 
             # sample random batch
-            sample_idx = np.random.randint(0, len(self.simple_batch_list), [self.batch_size])
-            batch = [self.simple_batch_list[i] for i in sample_idx]
+            sample_idx = np.random.randint(0, len(self.replay_memory), [self.batch_size])
+            batch = [self.replay_memory[i] for i in sample_idx]
 
             # train
             states, actions, rewards, states_prime, actions_prime = zip(*batch)
@@ -420,7 +431,7 @@ class qnn:
             self.summary_writer.add_summary(summary, self.training_steps_count)
         else:
             # fill list
-            self.simple_batch_list.append((s,a,r,s_prime,a_prime))
+            self.replay_memory.append((s,a,r,s_prime,a_prime))
             # print(self.simple_batch_list)
         # feed_dict = {self.s: s, self.a: a.astype(np.int64), self.r: r, self.s_prime: s_prime}
 
