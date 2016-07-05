@@ -18,7 +18,8 @@ class qnn:
                  replay_memory = False,
                  keep_prob_val = 1.0,
                  is_a_prime_external = False,
-                 replay_memory_size = 1e6):
+                 replay_memory_size = 1e6,
+                 ema_decay_rate = 0.999):
 
         self.is_a_prime_external = is_a_prime_external # This means SARSA instead of Q-learning
         self.keep_prob_val = keep_prob_val
@@ -232,7 +233,7 @@ class qnn:
                     with tf.name_scope('Wx_plus_b'):
                         preactivate_s = tf.matmul(input_tensor_list[0], weights) + biases
                         tf.histogram_summary(layer_name + '/pre_activations_s', preactivate_s)
-                        preactivate_s_prime = tf.matmul(input_tensor_list[1], ema.average(weights)) + biases
+                        preactivate_s_prime = tf.matmul(input_tensor_list[1], ema.average(weights)) + ema.average(biases)
                         tf.histogram_summary(layer_name + '/pre_activations_s_prime', preactivate_s_prime)
                     activations_s = act(preactivate_s, 'activation_s')
                     tf.histogram_summary(layer_name + '/activations_s', activations_s)
@@ -244,7 +245,7 @@ class qnn:
                     with tf.name_scope('Wx_plus_b'):
                         activations_s = tf.matmul(input_tensor_list[0], weights) + biases
                         tf.histogram_summary(layer_name + '/activations_s', activations_s)
-                        activations_s_prime = tf.matmul(input_tensor_list[1], ema.average(weights)) + biases
+                        activations_s_prime = tf.matmul(input_tensor_list[1], ema.average(weights)) + ema.average(biases)
                         tf.histogram_summary(layer_name + '/activations_s_prime', activations_s_prime)
                     return (activations_s, activations_s_prime)
 
@@ -297,11 +298,11 @@ class qnn:
         ema_ops_list = []
 
         # HIDDEN LAYERS
-        hidden_prev = nn_dual_layer_with_decay((self.s_norm, self.s_prime_norm), size_input, size_hidden[0], 'layer'+str(1), ema_ops_list)
+        hidden_prev = nn_dual_layer_with_decay((self.s_norm, self.s_prime_norm), size_input, size_hidden[0], 'layer'+str(1), ema_ops_list, decay=ema_decay_rate)
         with tf.name_scope('dropout'):
             hidden_prev = tf.nn.dropout(hidden_prev[0], self.keep_prob), tf.nn.dropout(hidden_prev[1], self.keep_prob)
         for idx in range(1, len(size_hidden) ):
-            hidden = nn_dual_layer_with_decay(hidden_prev, size_hidden[idx-1], size_hidden[idx], 'layer'+str(idx+1), ema_ops_list)
+            hidden = nn_dual_layer_with_decay(hidden_prev, size_hidden[idx-1], size_hidden[idx], 'layer'+str(idx+1), ema_ops_list, decay=ema_decay_rate)
             with tf.name_scope('dropout'):
                 dropped = tf.nn.dropout(hidden[0], self.keep_prob), tf.nn.dropout(hidden[1], self.keep_prob)
             hidden_prev = dropped
@@ -312,12 +313,13 @@ class qnn:
 
         # OUTPUT LAYERS
         with tf.name_scope('output'):
-            self.q_all, q_all_prime = nn_dual_layer_with_decay(hidden_prev, size_hidden[-1], size_output, 'layer'+str(len(size_hidden)+1), ema_ops_list, act=None)
+            self.q_all, q_all_prime = nn_dual_layer_with_decay(hidden_prev, size_hidden[-1], size_output, 'layer'+str(len(size_hidden)+1), ema_ops_list, act=None, decay=ema_decay_rate)
             if self.is_a_prime_external:
                 # SARSA
                 q_prime = tf.reduce_sum(tf.mul(q_all_prime, a_prime_one_hot), reduction_indices=[1])
             else:
                 # Q-learning
+                print('Q-learning configured in nn graph')
                 q_prime = tf.reduce_max(q_all_prime, reduction_indices=[1])
             q_target = tf.stop_gradient(q_prime) + self.r
             q_a = tf.reduce_sum(tf.mul(self.q_all, a_one_hot), reduction_indices=[1])
@@ -327,15 +329,16 @@ class qnn:
             tf.scalar_summary('log_mean_squares_error', tf.log(mean_squares_error))
 
         with tf.name_scope('train'):
-            # self.learning_rate = tf.placeholder(tf.float32, shape=[])
-            self.learning_rate = tf.constant(learning_rate)
-            with tf.control_dependencies(ema_ops_list):
-                if descent_method == 'adam':
-                    self.train_step = tf.train.AdamOptimizer(self.learning_rate).minimize(mean_squares_error)
-                elif descent_method == 'grad':
-                    self.train_step = tf.train.GradientDescentOptimizer(self.learning_rate).minimize(mean_squares_error)
-                elif descent_method == 'rmsprop':
-                    self.train_step = tf.train.RMSPropOptimizer(self.learning_rate, decay=0.95, momentum=0.95, epsilon=1e-2).minimize(mean_squares_error)
+            self.learning_rate_value = learning_rate
+            self.learning_rate = tf.placeholder(tf.float32, shape=[])
+            # self.learning_rate = tf.constant(learning_rate)
+            print('descending with ', descent_method)
+            if descent_method == 'adam':
+                self.train_step = tf.train.AdamOptimizer(self.learning_rate).minimize(mean_squares_error)
+            elif descent_method == 'grad':
+                self.train_step = tf.train.GradientDescentOptimizer(self.learning_rate).minimize(mean_squares_error)
+            elif descent_method == 'rmsprop':
+                self.train_step = tf.train.RMSPropOptimizer(self.learning_rate, decay=0.95, momentum=0.95, epsilon=1e-2).minimize(mean_squares_error)
 
 
         self.summary_op = tf.merge_all_summaries()
@@ -346,6 +349,7 @@ class qnn:
         self.summary_writer = tf.train.SummaryWriter('./data', self.sess.graph)
 
         self.training_steps_count = 0
+        self.samples_count = 0
 
         # self.simple_batch_list = []
         self.replay_memory = deque(maxlen=replay_memory_size)
@@ -401,9 +405,11 @@ class qnn:
 
 
 
-    def train_batch(self, s, a, r, s_prime, a_prime=None):
+    def train_batch(self, s, a, r, s_prime, a_prime=None, learning_rate=None):
+        if learning_rate is None:
+            learning_rate = self.l_r
 
-        if (len(self.replay_memory) >= 1e3*self.batch_size) and (self.training_steps_count % self.batch_size == 0):
+        if (len(self.replay_memory) >= 1e3*self.batch_size) and (self.samples_count % self.batch_size == 0):
             # fill list
             self.replay_memory.append((s,a,r,s_prime,a_prime))
 
@@ -421,7 +427,8 @@ class qnn:
 
             feed_dict = {self.s: states, self.a: actions, self.r: rewards, self.s_prime: states_prime,
                          self.keep_prob: self.keep_prob_val,
-                         self.phase_train: True}
+                         self.phase_train: True,
+                         self.learning_rate: learning_rate}
             if self.is_a_prime_external:
                 feed_dict[self.a_prime] = actions_prime
                 # print(feed_dict)
@@ -429,13 +436,16 @@ class qnn:
             # train and write summary
             summary, _ = self.sess.run([self.summary_op, self.train_step], feed_dict=feed_dict)
             self.summary_writer.add_summary(summary, self.training_steps_count)
+
+            self.training_steps_count += 1
         else:
             # fill list
             self.replay_memory.append((s,a,r,s_prime,a_prime))
             # print(self.simple_batch_list)
         # feed_dict = {self.s: s, self.a: a.astype(np.int64), self.r: r, self.s_prime: s_prime}
 
-        self.training_steps_count += 1
+        self.samples_count += 1
+
 
 
 

@@ -30,7 +30,9 @@ class q_learning():
                  nn_learning_rate = 1e-4,
                  qnn_target = 'q-learning', # 'sarsa'
                  replay_memory_size = 1e6,
-                 descent_method = 'grad'
+                 descent_method = 'grad',
+                 dropout_keep_prob = 1.0,
+                 ema_decay_rate = 0.999
                  ):
 
         self.env = gym.make(environment)
@@ -49,11 +51,6 @@ class q_learning():
 
         self.plot_resolution = plot_resolution
 
-        # w parametrizes a value for every action for each state
-        # It is a single row, but is divided into as many sections as actions there are
-        # Each of these sections gets multiplied by a different section of the features array
-        self.eligibility_vector_theta = np.zeros(self.num_tile_features * self.num_actions)
-        self.w = np.zeros(self.num_tile_features * self.num_actions)  # weights for q-function estimator
 
         self.lambda_ = lambda_
 
@@ -87,8 +84,11 @@ class q_learning():
                            learning_rate=nn_learning_rate,
                            is_a_prime_external=self.is_a_prime_external,
                            replay_memory_size=replay_memory_size,
-                           descent_method=descent_method
+                           descent_method=descent_method,
+                           keep_prob_val=0.9,
+                           ema_decay_rate=ema_decay_rate
                            )
+        self.learning_rate = nn_learning_rate
 
         print('lambda', self.lambda_)
         print('using environment', environment)
@@ -96,9 +96,7 @@ class q_learning():
 
 
     # epsilon-greedy but deterministic or stochastic is a choice
-    def policy(self, state, mode='deterministic', deepQ=False, w=None):
-        if w is None:
-            w = self.w
+    def policy(self, state, mode='deterministic', deepQ=False):
 
         explore = bool(np.random.choice([1, 0], p=[self.epsilon, 1 - self.epsilon]))
 
@@ -118,7 +116,12 @@ class q_learning():
 
 
 
-    def deepq_learning(self, num_iter=1000, max_steps=5000):
+    def deepq_learning(self, num_iter=1000, max_steps=5000, learning_rate=None, reset_replay_memory=False):
+        if learning_rate is None:
+            learning_rate = self.learning_rate
+
+        if reset_replay_memory:
+            self.qnn.replay_memory.clear()
 
         for it in range(num_iter):
 
@@ -142,10 +145,11 @@ class q_learning():
                 # evaluation alone, to test a neural network
                 if not self.is_a_prime_external:
                     # Q learning
-                    self.qnn.train_batch(prev_state.reshape(1,-1), np.array(prev_action).reshape(-1), np.array(reward).reshape(-1), state.reshape(1,-1))
+                    self.qnn.train_batch(prev_state.reshape(1,-1), np.array(prev_action).reshape(-1), np.array(reward).reshape(-1), state.reshape(1,-1), learning_rate=learning_rate)
                 else:
                     # SARSA (not converging)
-                    self.qnn.train_batch(prev_state.reshape(1,-1), np.array(prev_action).reshape(-1), np.array(reward).reshape(-1), state.reshape(1,-1), np.array(action).reshape(-1))
+                    raise ValueError('Option not defined')
+                    # self.qnn.train_batch(prev_state.reshape(1,-1), np.array(prev_action).reshape(-1), np.array(reward).reshape(-1), state.reshape(1,-1), np.array(action).reshape(-1))
 
                 prev_state = state
                 prev_action = action
