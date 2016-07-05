@@ -214,7 +214,7 @@ class ddpg():
 
         class nn_layer():
 
-            def __init__(self,input_tensor, input_dim, output_dim, layer_name, act=tf.nn.relu):
+            def __init__(self,input_tensor, input_dim, output_dim, init_range, layer_name, act=tf.nn.relu):
 
                 with tf.name_scope(layer_name):
                     # This Variable will hold the state of the weights for the layer
@@ -261,14 +261,17 @@ class ddpg():
         with tf.name_scope('mu_net'):
 
             with tf.name_scope('hidden_1'):
-                n1 = nn_layer(self.x_state, self.state_dim, self.num_neurons_layer1, 'layer1')
+                initrange = (-1/np.sqrt(self.state_dim), 1/np.sqrt(self.state_dim))
+                n1 = nn_layer(self.x_state, self.state_dim, self.num_neurons_layer1, initrange, 'layer1')
                 a1 = n1.make_nn_layer()
 
             with tf.name_scope('hidden_2'):
-                n2 = nn_layer(a1, self.num_neurons_layer1, self.num_neurons_layer2, 'layer2')
+                initrange = (-1/np.sqrt(self.num_neurons_layer1), 1/np.sqrt(self.num_neurons_layer1))
+                n2 = nn_layer(a1, self.num_neurons_layer1, self.num_neurons_layer2,initrange, 'layer2')
                 a2 = n2.make_nn_layer()
 
-            n3 = nn_layer(a2, self.num_neurons_layer2, self.num_outputs,layer_name= 'layer3', act=tf.identity)
+            initrange = (-1e-3, 1e-3)
+            n3 = nn_layer(a2, self.num_neurons_layer2, self.num_outputs, initrange, layer_name= 'layer3', act=tf.identity)
             self.y_mu = n3.make_nn_layer()
 
 
@@ -289,11 +292,12 @@ class ddpg():
         with tf.name_scope('Q_net'):
 
             with tf.name_scope('hidden_1'):
-                n1q = nn_layer(x_stateaction, self.state_dim + self.action_dim, self.num_neurons_layer1, 'layer1')
+                n1q = nn_layer(x_stateaction, self.state_dim, self.num_neurons_layer1, 'layer1')
                 a1q = n1q.make_nn_layer()
 
             with tf.name_scope('hidden_2'):
-                n2q = nn_layer(a1q, self.num_neurons_layer1, self.num_neurons_layer2, 'layer2')
+
+                n2q = nn_layer(a1q, self.num_neurons_layer1+ self.action_dim, self.num_neurons_layer2, 'layer2')
                 a2q = n2q.make_nn_layer()
 
             n3q = nn_layer(a2q, self.num_neurons_layer2, self.num_outputs,layer_name= 'layer3', act=tf.identity)
@@ -312,7 +316,7 @@ class ddpg():
             n3_primeq= nn_layer_prime(a2_primeq,n3, self.num_neurons_layer2, self.num_outputs, 'layer3', act=tf.identity)
             self.y_q_prime = n3_primeq.make_nn_layer()
 
-        with tf.name_scope('mse'):
+        with tf.name_scope('mse_q'):
             squ_diff = tf.pow(self.y_qtargets - self.y_q, 2)
             with tf.name_scope('total'):
                 self.mean_squared_error = tf.reduce_mean(squ_diff)
@@ -327,9 +331,9 @@ class ddpg():
 
         opt = tf.train.AdamOptimizer(self.learning_rate_actor)
         var_list = [n1q.weights,n1q.biases,n2q.weights,n2q.biases,n3q.weights,n3q.biases]   #these are all variables from the Q-network
-        var_grad = tf.gradients(self.y_q, var_list)
+        dmu_dtheta = tf.gradients(self.y_q, var_list)
         dQda = tf.gradients(self.y_q, self.x_action)
-        var_grad_multiplied = [tf.matmul(dQda, var_grad[i]) for i in var_grad]
+        var_grad_multiplied = [tf.matmul(dQda, dmu_dtheta[i]) for i in dmu_dtheta]
         grads_and_vars = zip(var_grad_multiplied, var_list)
 
         ema_updates = [n1.ema_ap_op, n2.ema_ap_op, n3.ema_ap_op, n1q.ema_ap_op, n2q.ema_ap_op, n3q.ema_ap_op]
@@ -353,8 +357,7 @@ class ddpg():
         rewards = np.asarray([transition_batch[i][2] for i in range])
         states_prime = np.asarray([transition_batch[i][3] for i in range])
 
-        states_prime_actions = np.concatenate((states_prime,actions),axis=1)
-        Qprime = self.eval_Qnet_prime(states_prime_actions)
+        Qprime = self.eval_Qnet_prime(states_prime, actions)
         targets = rewards + self.gamma * Qprime
 
         return states, actions, targets
@@ -393,14 +396,14 @@ class ddpg():
             num_steps= self.test_learned_policy()
             print('episode length using learned policy:',num_steps)
 
-    def mu(self, input):
-        return self.y_mu.eval(feed_dict= {self.x_state : input})
+    def mu(self, state):
+        return self.y_mu.eval(feed_dict= {self.x_state : state})
 
-    def mu_prime(self, input):
-        return self.y_mu_prime.eval(feed_dict= {self.x_state : input})
+    def mu_prime(self, state):
+        return self.y_mu_prime.eval(feed_dict= {self.x_state : state})
 
-    def eval_Qnet_prime(self, input):
-        return self.y_q_prime.eval(feed_dict= {self.x_state : input})
+    def eval_Qnet_prime(self, state, action):
+        return self.y_q_prime.eval(feed_dict= {self.x_state : state, self.x_action: action})
 
     def test_learned_policy(self, limit=10000, enable_render=False):
 
