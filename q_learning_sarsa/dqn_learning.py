@@ -66,6 +66,9 @@ class q_learning():
         normalization_var[np.isinf(normalization_var)] = 1.0
         normalization_mean = ((high + low)/2.0).astype(np.float32)
         normalization_mean[np.isnan(normalization_mean)] = 0.0
+        if self.select_env == 'CartPole-v0':
+            normalization_mean *= 0
+            normalization_var /= normalization_var
 
         ## exploration parameters
         # too much exploration is wrong!!!
@@ -95,7 +98,7 @@ class q_learning():
                            is_a_prime_external=self.is_a_prime_external,
                            replay_memory_size=replay_memory_size,
                            descent_method=descent_method,
-                           keep_prob_val=0.9,
+                           keep_prob_val=dropout_keep_prob,
                            ema_decay_rate=ema_decay_rate,
                            normalization_mean=normalization_mean,
                            normalization_var=normalization_var,
@@ -103,7 +106,6 @@ class q_learning():
                            )
         self.learning_rate = nn_learning_rate
 
-        print('lambda', self.lambda_)
         print('using environment', environment)
         print('qnn target', qnn_target, self.is_a_prime_external, self.qnn.is_a_prime_external)
 
@@ -176,20 +178,20 @@ class q_learning():
                     if self.epsilon > 0.1:
                         self.epsilon -= (self.init_epsilon - self.end_epsilon)*(1./self.exploration_decrease_length)
 
-            if (it + 1) % 1 == 0:
+            if (it + 1) % 5 == 0:
                 print("Episode %d" % (it))
                 if (done): print("Length %d" % (self.episode_lengths[-1]))
 
-            if (it + 1) % 10 == 0:
+            if (it + 1) % 100 == 0:
                 print("exploration ", self.epsilon)
                 self.plot_training()
 
-            if (it + 1) % 10 == 0:
+            if (it + 1) % 100 == 0:
                 self.test_lengths.append(self.run_test_episode(limit=1000))
                 self.test_its.append(self.total_train_episodes)
                 self.plot_testing()
 
-            if (it + 1) % 10 == 0:
+            if (it + 1) % 100 == 0:
                 if self.statedim == 2:
                     # print('last w', self.w)
                     self.plot_deepQ_policy(mode='deterministic')
@@ -329,7 +331,12 @@ class q_learning():
 
         if any(np.array(self.episode_lengths > 0).flatten()):
             fig = plt.figure()
-            plt.plot(self.episode_lengths)
+            if len(self.episode_lengths) > 1000:
+                plt.plot(np.arange(len(self.episode_lengths))[range(0,len(self.episode_lengths),10)],
+                         np.array(self.episode_lengths)[range(0,len(self.episode_lengths),10)],
+                         '.', linewidth=0)
+            else:
+                plt.plot(self.episode_lengths, '.', linewidth=0)
             plt.yscale('log')
             plt.xlabel("episodes")
             plt.ylabel("timesteps")
@@ -337,9 +344,12 @@ class q_learning():
 
     def plot_testing(self):
 
-        if any(np.array(self.episode_lengths > 0).flatten()):
+        if any(np.array(self.test_lengths > 0).flatten()):
             fig = plt.figure()
-            plt.plot(self.test_its, self.test_lengths)
+            if len(self.test_lengths) > 1000:
+                plt.plot(np.convolve(self.test_lengths, np.ones(10)/10, mode='same'), '.', linewidth=0)
+            else:
+                plt.plot(self.test_its, self.test_lengths, '.', linewidth=0)
             plt.yscale('log')
             plt.xlabel("test episodes")
             plt.ylabel("timesteps")
