@@ -19,8 +19,18 @@ class qnn:
                  keep_prob_val = 1.0,
                  is_a_prime_external = False,
                  replay_memory_size = 1e6,
-                 ema_decay_rate = 0.999):
+                 ema_decay_rate = 0.999,
+                 normalization_mean = None,
+                 normalization_var = None,
+                 env_name = None,
+                 do_train_every_sample = False
+                 ):
+        print("normaliztion mean", normalization_mean)
+        print("normalization var", normalization_var)
 
+        self.do_train_every_sample = do_train_every_sample
+        # if env_name == 'CartPole-v0':
+        #     self.do_train_every_sample = True
         self.is_a_prime_external = is_a_prime_external # This means SARSA instead of Q-learning
         self.keep_prob_val = keep_prob_val
         self.batch_size = batch_size
@@ -252,8 +262,8 @@ class qnn:
 
         # NORMALIZE INPUT
         with tf.name_scope('input'):
-            mean = tf.constant([-0.3, 0], name='batch_mean')
-            variance = tf.constant([0.81, 0.0049], name='batch_variance')
+            mean = tf.constant(normalization_mean, name='batch_mean')
+            variance = tf.constant(normalization_var, name='batch_variance')
             # mean = tf.constant([0., 0.], name='batch_mean')
             # variance = tf.constant([1.0, 1.0], name='batch_variance')
             # need to be class variables to be able to make a feed_dict from other class functions
@@ -346,7 +356,7 @@ class qnn:
         self.sess = tf.Session()
 
         self.sess.run(tf.initialize_all_variables())
-        self.summary_writer = tf.train.SummaryWriter('./data', self.sess.graph)
+        self.summary_writer = tf.train.SummaryWriter('./data/'+env_name, self.sess.graph)
 
         self.training_steps_count = 0
         self.samples_count = 0
@@ -409,7 +419,7 @@ class qnn:
         if learning_rate is None:
             learning_rate = self.l_r
 
-        if (len(self.replay_memory) >= 1e3*self.batch_size) and (self.samples_count % self.batch_size == 0):
+        if (len(self.replay_memory) >= 1e3*self.batch_size) and (self.samples_count % self.batch_size == 0 or self.do_train_every_sample):
             # fill list
             self.replay_memory.append((s,a,r,s_prime,a_prime))
 
@@ -434,8 +444,12 @@ class qnn:
                 # print(feed_dict)
 
             # train and write summary
-            summary, _ = self.sess.run([self.summary_op, self.train_step], feed_dict=feed_dict)
-            self.summary_writer.add_summary(summary, self.training_steps_count)
+            if self.training_steps_count % 10 == 0:
+                summary, _ = self.sess.run([self.summary_op, self.train_step], feed_dict=feed_dict)
+                self.summary_writer.add_summary(summary, self.training_steps_count)
+            else:
+                self.sess.run(self.train_step, feed_dict=feed_dict)
+
 
             self.training_steps_count += 1
         else:

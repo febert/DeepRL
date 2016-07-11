@@ -44,9 +44,11 @@ class q_learning():
 
         # lengths of all the played episodes
         self.episode_lengths = []
+        self.total_train_episodes = 0
 
         # lengths of all the tested episodes
         self.test_lengths = []
+        self.test_its = []
 
 
         self.plot_resolution = plot_resolution
@@ -56,6 +58,17 @@ class q_learning():
 
         ## stochastic or deterministic softmax-based actions
         self.policy_mode = policy_mode
+
+        # STATE NORMALIZATION
+        high = self.env.observation_space.high
+        low = self.env.observation_space.low
+        normalization_var = ((high/2 - low/2)**2).astype(np.float32)
+        normalization_var[np.isinf(normalization_var)] = 1.0
+        normalization_mean = ((high + low)/2.0).astype(np.float32)
+        normalization_mean[np.isnan(normalization_mean)] = 0.0
+        if self.select_env == 'CartPole-v0':
+            normalization_mean *= 0
+            normalization_var /= normalization_var
 
         ## exploration parameters
         # too much exploration is wrong!!!
@@ -85,12 +98,14 @@ class q_learning():
                            is_a_prime_external=self.is_a_prime_external,
                            replay_memory_size=replay_memory_size,
                            descent_method=descent_method,
-                           keep_prob_val=0.9,
-                           ema_decay_rate=ema_decay_rate
+                           keep_prob_val=dropout_keep_prob,
+                           ema_decay_rate=ema_decay_rate,
+                           normalization_mean=normalization_mean,
+                           normalization_var=normalization_var,
+                           env_name=environment
                            )
         self.learning_rate = nn_learning_rate
 
-        print('lambda', self.lambda_)
         print('using environment', environment)
         print('qnn target', qnn_target, self.is_a_prime_external, self.qnn.is_a_prime_external)
 
@@ -124,6 +139,7 @@ class q_learning():
             self.qnn.replay_memory.clear()
 
         for it in range(num_iter):
+            self.total_train_episodes += 1
 
             #            episode = []
             prev_state = self.env.reset()
@@ -162,23 +178,55 @@ class q_learning():
                     if self.epsilon > 0.1:
                         self.epsilon -= (self.init_epsilon - self.end_epsilon)*(1./self.exploration_decrease_length)
 
-            if (it + 1) % 1 == 0:
+            if (it + 1) % 5 == 0:
                 print("Episode %d" % (it))
                 if (done): print("Length %d" % (self.episode_lengths[-1]))
 
-            if (it + 1) % 10 == 0:
+            if (it + 1) % 100 == 0:
                 print("exploration ", self.epsilon)
                 self.plot_training()
 
-            if (it + 1) % 10 == 0:
-                if self.select_env == 'MountainCar-v0':
+            if (it + 1) % 100 == 0:
+                self.test_lengths.append(self.run_test_episode(limit=1000))
+                self.test_its.append(self.total_train_episodes)
+                self.plot_testing()
+
+            if (it + 1) % 100 == 0:
+                if self.statedim == 2:
                     # print('last w', self.w)
                     self.plot_deepQ_policy(mode='deterministic')
                     self.plot_deepQ_function()
 
+
             # if (it + 1) % 10 == 0:
             #     self.plot_training()
 
+
+    def run_test_episode(self, enable_render=False, limit=5000):
+        save_epsilon = self.epsilon
+        self.epsilon = 0.
+
+        episode_length = 0.
+        state = self.env.reset()
+
+        done = False
+        while (not done):
+
+            if episode_length > limit:
+                self.epsilon = save_epsilon
+                return episode_length
+
+            episode_length += 1
+
+            action = self.policy(state, mode=self.policy_mode, deepQ=True)
+            state, _, done, _ = self.env.step(action)
+            if enable_render: self.env.render()
+            # if count > self.max_episode_length: break;
+
+        if enable_render: print("This episode took {} steps".format(count))
+
+        self.epsilon = save_epsilon
+        return episode_length
 
 
 
@@ -283,7 +331,12 @@ class q_learning():
 
         if any(np.array(self.episode_lengths > 0).flatten()):
             fig = plt.figure()
-            plt.plot(self.episode_lengths)
+            if len(self.episode_lengths) > 1000:
+                plt.plot(np.arange(len(self.episode_lengths))[range(0,len(self.episode_lengths),10)],
+                         np.array(self.episode_lengths)[range(0,len(self.episode_lengths),10)],
+                         '.', linewidth=0)
+            else:
+                plt.plot(self.episode_lengths, '.', linewidth=0)
             plt.yscale('log')
             plt.xlabel("episodes")
             plt.ylabel("timesteps")
@@ -291,7 +344,13 @@ class q_learning():
 
     def plot_testing(self):
 
-        fig = plt.figure()
-        plt.plot(self.test_lengths)
-        plt.yscale('log')
-        plt.show()
+        if any(np.array(self.test_lengths > 0).flatten()):
+            fig = plt.figure()
+            if len(self.test_lengths) > 1000:
+                plt.plot(np.convolve(self.test_lengths, np.ones(10)/10, mode='same'), '.', linewidth=0)
+            else:
+                plt.plot(self.test_its, self.test_lengths, '.', linewidth=0)
+            plt.yscale('log')
+            plt.xlabel("test episodes")
+            plt.ylabel("timesteps")
+            plt.show()
