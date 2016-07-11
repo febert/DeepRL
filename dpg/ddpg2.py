@@ -122,6 +122,8 @@ class ddpg():
 
             state_prime, reward, done, info = self.env.step(action)
 
+            print('stateprime',state_prime)
+
 
             if not test_run:
                 self.replay_memory.append((state, action, reward, state_prime, done))
