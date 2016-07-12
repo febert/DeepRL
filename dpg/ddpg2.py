@@ -25,6 +25,8 @@ import gym as gym
 from collections import deque
 from ornstein_uhlenbeck import ornstein_uhlenbeck
 
+from matplotlib.colors import LogNorm
+
 
 class ddpg():
 
@@ -120,10 +122,9 @@ class ddpg():
             else:
                 action = self.eval_mu(state) + self.ou_process.ou_step()
 
-            state_prime, reward, done, info = self.env.step(action)
-
-            print('stateprime',state_prime)
-
+            action = self.apply_limits(action)
+            action = action.squeeze()
+            state_prime, reward, done, _ = self.env.step(action)
 
             if not test_run:
                 self.replay_memory.append((state, action, reward, state_prime, done))
@@ -255,7 +256,7 @@ class ddpg():
         self.mu_prime, summary_muprime = self.mu_net(x_state_normed, self.theta_mu_prime, name='munet_prime')
         q_of_mu, _  = self.q_net(x_state_normed, self.mu, self.theta_q, name='qnet_mu')
         opt = tf.train.AdamOptimizer(self.learning_rate_actor)
-        mu_loss = -tf.reduce_mean(q_of_mu)
+        mu_loss = tf.reduce_mean(q_of_mu)
         tf.scalar_summary('mu_loss', mu_loss)
         grads_vars_mu = opt.compute_gradients(mu_loss,self.theta_mu)
 
@@ -319,13 +320,14 @@ class ddpg():
 
         if self.step % 100 == 0:
             print('result after minibatch no. {} : mean squared error: {}'.format(self.step, mse_val))
-            print('batch train data states', dict_[self.x_states])
-            print('batch train data actions', dict_[self.x_action])
+            # print('batch train data states', dict_[self.x_states])
+            # print('batch train data actions', dict_[self.x_action])
             self.plot_learned_mu()
+            self.plot_replay_memory_2d_state_histogramm()
 
-            print('qs: ', self.q.eval(feed_dict = {self.x_states: dict_[self.x_states], self.x_action: dict_[self.x_action]}))
+            # print('qs: ', self.q.eval(feed_dict = {self.x_states: dict_[self.x_states], self.x_action: dict_[self.x_action]}))
 
-            print('batch train data targets', dict_[self.q_targets])
+            # print('batch train data targets', dict_[self.q_targets])
 
 
         self.step += 1
@@ -338,6 +340,16 @@ class ddpg():
 
     def eval_Qnet_prime(self, state, action):
         return self.q_prime.eval(feed_dict= {self.x_states : state, self.x_action: action})
+
+    def apply_limits(self,action):
+
+        if action < self.action_limits[0]:
+            action = self.action_limits[0]
+
+        if action > self.action_limits[1]:
+            action = self.action_limits[1]
+
+        return action
 
 
     def plot_episode_lengths(self, train):
@@ -362,6 +374,20 @@ class ddpg():
 
         self.initialize_training(self.sess)
         self.start_training()
+
+    def plot_replay_memory_2d_state_histogramm(self):
+        if self.state_dim == 2:
+            rm=np.array(self.replay_memory)
+            states, _,_,_,_ = zip(*rm)
+            states_np = np.array(states)
+            states_np = np.squeeze(states_np)
+
+            x,v = zip(*states_np)
+            plt.hist2d(x, v, bins=40, norm=LogNorm())
+            plt.xlabel("position")
+            plt.ylabel("velocity")
+            plt.colorbar()
+            plt.show()
 
 if __name__ == '__main__':
 
