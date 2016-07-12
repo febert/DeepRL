@@ -23,7 +23,8 @@ class qnn:
                  normalization_mean = None,
                  normalization_var = None,
                  env_name = None,
-                 do_train_every_sample = False
+                 do_train_every_sample = False,
+                 init_weights = None
                  ):
         print("normaliztion mean", normalization_mean)
         print("normalization var", normalization_var)
@@ -35,12 +36,17 @@ class qnn:
         self.keep_prob_val = keep_prob_val
         self.batch_size = batch_size
 
+        if init_weights is None:
+            init_weights = 0.1
+        self.init_weights = init_weights
+        print("init_weights", self.init_weights)
+
         def weight_variable(shape):
             """
             Create a weight variable with appropriate initialization.
             Random to break symmetries.
             """
-            initial = tf.truncated_normal(shape, stddev=0.1)
+            initial = tf.truncated_normal(shape, stddev=self.init_weights)
             return tf.Variable(initial)
 
         def bias_variable(shape):
@@ -331,7 +337,7 @@ class qnn:
                 # Q-learning
                 print('Q-learning configured in nn graph')
                 q_prime = tf.reduce_max(q_all_prime, reduction_indices=[1])
-            q_target = tf.stop_gradient(q_prime) + self.r
+            q_target = 0.99*tf.stop_gradient(q_prime) + self.r
             q_a = tf.reduce_sum(tf.mul(self.q_all, a_one_hot), reduction_indices=[1])
 
         with tf.name_scope('mean_squares_error'):
