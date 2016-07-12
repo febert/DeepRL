@@ -25,6 +25,8 @@ import gym as gym
 from collections import deque
 from ornstein_uhlenbeck import ornstein_uhlenbeck
 
+from matplotlib.colors import LogNorm
+
 
 class ddpg():
 
@@ -121,10 +123,8 @@ class ddpg():
                 action = self.eval_mu(state) + self.ou_process.ou_step()
 
             action = self.apply_limits(action)
-            state_prime, reward, done, info = self.env.step(action)
-
-            print('stateprime',state_prime)
-
+            action = action.squeeze()
+            state_prime, reward, done, _ = self.env.step(action)
 
             if not test_run:
                 self.replay_memory.append((state, action, reward, state_prime, done))
@@ -159,9 +159,6 @@ class ddpg():
             if (it+1)%10 == 0:
                 self.plot_episode_lengths(train= True)
                 self.plot_episode_lengths(train= False)
-
-            if(it+1)%100 ==0:
-                self.plot_replay_memory_2d_state_histogramm()
 
     def hist_summaries(self,*args):
         return tf.merge_summary([tf.histogram_summary(t.name, t) for t in args])
@@ -259,7 +256,7 @@ class ddpg():
         self.mu_prime, summary_muprime = self.mu_net(x_state_normed, self.theta_mu_prime, name='munet_prime')
         q_of_mu, _  = self.q_net(x_state_normed, self.mu, self.theta_q, name='qnet_mu')
         opt = tf.train.AdamOptimizer(self.learning_rate_actor)
-        mu_loss = -tf.reduce_mean(q_of_mu)
+        mu_loss = tf.reduce_mean(q_of_mu)
         tf.scalar_summary('mu_loss', mu_loss)
         grads_vars_mu = opt.compute_gradients(mu_loss,self.theta_mu)
 
@@ -323,13 +320,14 @@ class ddpg():
 
         if self.step % 100 == 0:
             print('result after minibatch no. {} : mean squared error: {}'.format(self.step, mse_val))
-            print('batch train data states', dict_[self.x_states])
-            print('batch train data actions', dict_[self.x_action])
+            # print('batch train data states', dict_[self.x_states])
+            # print('batch train data actions', dict_[self.x_action])
             self.plot_learned_mu()
+            self.plot_replay_memory_2d_state_histogramm()
 
-            print('qs: ', self.q.eval(feed_dict = {self.x_states: dict_[self.x_states], self.x_action: dict_[self.x_action]}))
+            # print('qs: ', self.q.eval(feed_dict = {self.x_states: dict_[self.x_states], self.x_action: dict_[self.x_action]}))
 
-            print('batch train data targets', dict_[self.q_targets])
+            # print('batch train data targets', dict_[self.q_targets])
 
 
         self.step += 1
