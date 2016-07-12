@@ -173,7 +173,7 @@ class q_learning():
                 # evaluation alone, to test a neural network
                 if not self.is_a_prime_external:
                     # Q learning
-                    self.qnn.train_batch(prev_state.reshape(1,-1), np.array(prev_action).reshape(-1), np.array(reward).reshape(-1), state.reshape(1,-1), learning_rate=learning_rate)
+                    self.qnn.train_batch(prev_state.reshape(1,-1), np.array(prev_action).reshape(-1), np.array(reward).reshape(-1), state.reshape(1,-1), done, learning_rate=learning_rate)
                 else:
                     # SARSA (not converging)
                     raise ValueError('Option not defined')

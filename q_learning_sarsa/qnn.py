@@ -329,6 +329,7 @@ class qnn:
 
         # OUTPUT LAYERS
         with tf.name_scope('output'):
+            self.is_not_end_state = tf.placeholder(tf.float32, shape=[None], name='is_end_state_prime')
             self.q_all, q_all_prime = nn_dual_layer_with_decay(hidden_prev, size_hidden[-1], size_output, 'layer'+str(len(size_hidden)+1), ema_ops_list, act=None, decay=ema_decay_rate)
             if self.is_a_prime_external:
                 # SARSA
@@ -336,8 +337,8 @@ class qnn:
             else:
                 # Q-learning
                 print('Q-learning configured in nn graph')
-                q_prime = tf.reduce_max(q_all_prime, reduction_indices=[1])
-            q_target = 0.99*tf.stop_gradient(q_prime) + self.r
+                q_prime = tf.stop_gradient(tf.reduce_max(q_all_prime, reduction_indices=[1]))
+            q_target = 0.99*q_prime*self.is_not_end_state + self.r
             q_a = tf.reduce_sum(tf.mul(self.q_all, a_one_hot), reduction_indices=[1])
 
         with tf.name_scope('mean_squares_error'):
@@ -421,27 +422,29 @@ class qnn:
 
 
 
-    def train_batch(self, s, a, r, s_prime, a_prime=None, learning_rate=None):
+    def train_batch(self, s, a, r, s_prime, done, a_prime=None, learning_rate=None):
         if learning_rate is None:
             learning_rate = self.l_r
 
         if (len(self.replay_memory) >= 1e3*self.batch_size) and (self.samples_count % self.batch_size == 0 or self.do_train_every_sample):
             # fill list
-            self.replay_memory.append((s,a,r,s_prime,a_prime))
+            self.replay_memory.append((s,a,r,s_prime,a_prime,done))
 
             # sample random batch
             sample_idx = np.random.randint(0, len(self.replay_memory), [self.batch_size])
             batch = [self.replay_memory[i] for i in sample_idx]
 
             # train
-            states, actions, rewards, states_prime, actions_prime = zip(*batch)
+            states, actions, rewards, states_prime, actions_prime, done = zip(*batch)
             states = np.squeeze(np.array(states))
             actions = np.squeeze(np.array(actions))
             rewards = np.squeeze(np.array(rewards))
             states_prime = np.squeeze(np.array(states_prime))
             actions_prime = np.squeeze(np.array(actions_prime))
+            done = np.array(done)
 
             feed_dict = {self.s: states, self.a: actions, self.r: rewards, self.s_prime: states_prime,
+                         self.is_not_end_state: 1.0 - done,
                          self.keep_prob: self.keep_prob_val,
                          self.phase_train: True,
                          self.learning_rate: learning_rate}
@@ -460,7 +463,7 @@ class qnn:
             self.training_steps_count += 1
         else:
             # fill list
-            self.replay_memory.append((s,a,r,s_prime,a_prime))
+            self.replay_memory.append((s,a,r,s_prime,a_prime,done))
             # print(self.simple_batch_list)
         # feed_dict = {self.s: s, self.a: a.astype(np.int64), self.r: r, self.s_prime: s_prime}
 
