@@ -6,6 +6,7 @@ np.set_printoptions(threshold=np.inf)
 import matplotlib.pyplot as plt
 from matplotlib import cm
 from mpl_toolkits.mplot3d import axes3d
+from matplotlib.colors import LogNorm
 import time
 import math
 import cPickle
@@ -32,7 +33,8 @@ class q_learning():
                  replay_memory_size = 1e6,
                  descent_method = 'grad',
                  dropout_keep_prob = 1.0,
-                 ema_decay_rate = 0.999
+                 ema_decay_rate = 0.999,
+                 init_weights = None
                  ):
 
         self.env = gym.make(environment)
@@ -60,15 +62,18 @@ class q_learning():
         self.policy_mode = policy_mode
 
         # STATE NORMALIZATION
-        high = self.env.observation_space.high
-        low = self.env.observation_space.low
-        normalization_var = ((high/2 - low/2)**2).astype(np.float32)
-        normalization_var[np.isinf(normalization_var)] = 1.0
-        normalization_mean = ((high + low)/2.0).astype(np.float32)
-        normalization_mean[np.isnan(normalization_mean)] = 0.0
-        if self.select_env == 'CartPole-v0':
-            normalization_mean *= 0
-            normalization_var /= normalization_var
+        print('Calculating normalization by random action sampling...')
+        states = []
+
+        while len(states) < 1e5:
+            self.env.reset()
+            done = False
+            while not done:
+                state, _, done, _ = self.env.step(self.env.action_space.sample())
+                states.append(state)
+
+        normalization_mean = np.mean(states, axis=(0)).astype(np.float32)
+        normalization_var = np.var(states, axis=(0)).astype(np.float32)
 
         ## exploration parameters
         # too much exploration is wrong!!!
@@ -102,7 +107,8 @@ class q_learning():
                            ema_decay_rate=ema_decay_rate,
                            normalization_mean=normalization_mean,
                            normalization_var=normalization_var,
-                           env_name=environment
+                           env_name=environment,
+                           init_weights=init_weights
                            )
         self.learning_rate = nn_learning_rate
 
@@ -137,6 +143,12 @@ class q_learning():
 
         if reset_replay_memory:
             self.qnn.replay_memory.clear()
+
+        # Show initial state, since algorithm is highly biased by the initial conditions
+        if self.statedim == 2:
+            # print('last w', self.w)
+            self.plot_deepQ_policy(mode='deterministic')
+            self.plot_deepQ_function()
 
         for it in range(num_iter):
             self.total_train_episodes += 1
@@ -197,9 +209,8 @@ class q_learning():
                     self.plot_deepQ_policy(mode='deterministic')
                     self.plot_deepQ_function()
 
+        self.plot_replay_memory_2d_state_histogramm()
 
-            # if (it + 1) % 10 == 0:
-            #     self.plot_training()
 
 
     def run_test_episode(self, enable_render=False, limit=5000):
@@ -353,4 +364,18 @@ class q_learning():
             plt.yscale('log')
             plt.xlabel("test episodes")
             plt.ylabel("timesteps")
+            plt.show()
+
+    def plot_replay_memory_2d_state_histogramm(self):
+        if self.statedim == 2:
+            rm=np.array(self.qnn.replay_memory)
+            states, _,_,_,_ = zip(*rm)
+            states_np = np.array(states)
+            states_np = np.squeeze(states_np)
+
+            x,v = zip(*states_np)
+            plt.hist2d(x, v, bins=40, norm=LogNorm())
+            plt.xlabel("position")
+            plt.ylabel("velocity")
+            plt.colorbar()
             plt.show()
