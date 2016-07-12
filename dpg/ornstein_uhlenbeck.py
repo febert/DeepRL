@@ -13,6 +13,9 @@ class ornstein_uhlenbeck():
         self.sigma = sigma
         self.ndim = ndim
 
+    def reset(self):
+        self.x = np.zeros_like(self.x)
+
     def ou_step(self):
 
         epsilon = np.random.randn(self.ndim)
@@ -24,11 +27,12 @@ class ornstein_uhlenbeck():
 
 
 
+
 if __name__ == '__main__':
 
-        ou1 = ornstein_uhlenbeck(ndim= 1, theta= 0.15, sigma= .3, delta_t= .01)
+        ou1 = ornstein_uhlenbeck(ndim= 1, theta= 0.15, sigma= .3, delta_t= 1)
 
-        nsample = 1000
+        nsample = 100
         ou1vals = np.zeros(nsample)
 
         for i in range(nsample):

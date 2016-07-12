@@ -7,3 +7,5 @@ Tensorflow/MNIST_data/
 Tensorflow/mnist_own_descent/
 Tensorflow/regressiontest/
 dpg/regressiontest/
+dpg/logging/
+DDPG_github

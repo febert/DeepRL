@@ -22,17 +22,15 @@ import math
 import cPickle
 import gym as gym
 
+from collections import deque
+from ornstein_uhlenbeck import ornstein_uhlenbeck
+
 
 class ddpg():
 
     def __init__(self,
-                 input_low,
-                 input_high,
                  environment = 'MountainCarContinuous-v0',
                  ):
-
-        self.input_high = input_high
-        self.input_low = input_low
 
         self.gamma = 0.9
 
@@ -42,7 +40,8 @@ class ddpg():
         self.num_outputs = 1
         self.action_dim = 1
         self.state_dim = 2
-        self.batchsize = 50
+        self.batch_size = 50
+        self.samples_count = 0
 
         self.sess = tf.InteractiveSession()
         self.num_neurons_layer1 = 100
@@ -53,12 +52,12 @@ class ddpg():
 
         self.summaries_dir = './regressiontest/ddpg'
 
-        self.max_replay_size = 1e3 #number of minibatch transition to be stored in replay buffer
+        replay_memory_size = 1e6 #number of transitions to be stored in replay buffer
 
-        self.episode_lengths = []
+        self.train_lengths = []
         self.test_lengths = []
 
-        self.replay_memory = []
+        self.replay_memory = deque(maxlen=replay_memory_size)
 
         # environment specific:
         self.env = gym.make(environment)
@@ -68,6 +67,10 @@ class ddpg():
         print('action limits', self.action_limits)
         actionmean = (self.action_limits[0]+ self.action_limits[1])/2
 
+        self.ou_process = ornstein_uhlenbeck(ndim= 1, theta= 0.15, sigma= .3, delta_t= 1)
+
+        self.obs_low = self.env.observation_space.low
+        self.obs_high = self.env.observation_space.high
 
 
     def plot_learned_mu(self):
@@ -75,10 +78,8 @@ class ddpg():
         print('plotting the mu() policy learned by NN')
 
         resolution = 50
-
-        # values to evaluate policy at
-        x_range = np.linspace(self.input_high[0], self.input_low[0], resolution)
-        v_range = np.linspace(self.input_high[1], self.input_low[1], resolution)
+        x_range = np.linspace(self.obs_low[0], self.obs_high[0], resolution)
+        v_range = np.linspace(self.obs_low[1], self.obs_high[1], resolution)
 
         # get actions in a grid
         vals = np.zeros((resolution, resolution))
@@ -97,36 +98,35 @@ class ddpg():
         ax.set_zlabel("action")
         plt.show()
 
-    def run_episode(self, it, enable_render=False, limit=5000, target = True):
+    def run_episode(self, enable_render=False, limit=5000, test_run = True):
 
-        episode = []
         state = self.env.reset()
+        self.ou_process.reset()
 
         count = 0
         done = False
 
         while ( not done ):
 
-            if len(episode)>limit:
-                return episode
+            if count>limit:
+                return count
 
             count += 1
-            state = np.squeeze(state)  # convert (2,1) array in to (2,)
-            if target:
+            state = np.squeeze(state).reshape((1,2))  # convert (2,1) array in to (2,)
+            if test_run:
                 action = self.mu(state)
             else:
-                action = self.beta(state)
-
-            # action = self.apply_limits(action)
-            # print('action',action)
+                action = self.mu(state) + self.ou_process.ou_step()
 
             state_prime, reward, done, info = self.env.step(action)
 
-            self.replay_memory.append((state, action, reward, state_prime))
             state = state_prime
 
-            if it > 0 or count > 100*self.batchsize:
-                self.train_networks()
+            if not test_run:
+                self.replay_memory.append((state, action, reward, state_prime, done))
+                self.samples_count += 1
+                if len(self.replay_memory) > 1e2* self.batch_size and self.samples_count % self.batch_size/2:
+                    self.train_networks()
 
             if enable_render:
                 self.env.render()
@@ -134,50 +134,23 @@ class ddpg():
         return count
 
 
-    def start_training(self, max_episodes=1000, dataname ='unnamed_data', save = False, max_episode_length = 20000):
-        # fig = plt.figure()
+    def start_training(self, max_episodes=1000, dataname ='unnamed_data', save = False, max_episode_length = 10000):
 
         for it in range(max_episodes):
 
+            print('starting episode no',it )
+
             # run episode
-            episode = self.run_episode(it, target= False, enable_render=False, limit= max_episode_length,)
+            episode_length = self.run_episode(test_run= False, enable_render=False, limit= max_episode_length)
+            self.train_lengths.append(episode_length)
 
-            self.episode_lengths.append(len(episode))
-
-            if it % 5 == 0:
+            if (it+1) % 100 == 0:
                 # perform a test run with the target policy:
-                self.test_lengths.append(len(self.run_episode(target= True, enable_render=False)))
+                self.test_lengths.append(self.run_episode(test_run= True, enable_render=False))
 
-
-            if (it+1)%1 == 0:
-                # output training info
-                print("Finished run #{}".format(it + 1))
-                print("with a sigma exploration of  {}".format(self.sigma_b))
-#                print("and learning rate of {}".format(self.alpha))
-                print("lasted {0} steps".format(len(episode)))
-
-                if self.select_env == 'MountainCarContinuous-v0':
-                    print("theta")
-                    print(self.theta)
-                    print('last v', self.v)
-                    print("beta: ")
-                    print("mu: ")
-                    self.plot_policy(mode= 'deterministic')
-
-
-            # print('sum tile features ', tile_features_mat[idx].sum())
-            print('max theta', self.theta.max())
-            print('min theta', self.theta.min())
-
-
-            if (it+1)%10 == 0:
-                self.plot_training()
-                self.plot_testing()
-
-            if save:
-                self.savedata(dataname=dataname)
-
-        return self.theta
+            if (it+1)%100 == 0:
+                self.plot_episode_lengths(train= True)
+                self.plot_episode_lengths(train= False)
 
     def initialize_training(self, sess):
 
@@ -190,14 +163,18 @@ class ddpg():
             self.y_qtargets = tf.placeholder(tf.float32, [None, self.num_outputs], name='y-input')
 
         # We can't initialize these variables to 0 - the network will get stuck.
-        def weight_variable(shape):
+        def weight_variable(shape,initrange):
             """Create a weight variable with appropriate initialization."""
-            initial = tf.truncated_normal(shape, stddev=0.1)
+            #initial = tf.truncated_normal(shape, stddev=0.1)
+            initial = tf.random_uniform(shape,initrange[0],initrange[1])
             return tf.Variable(initial)
 
-        def bias_variable(shape):
+        def bias_variable(shape,initrange, init_bias_rnd):
             """Create a bias variable with appropriate initialization."""
-            initial = tf.constant(0.1, shape=shape)
+            if init_bias_rnd:
+                initial = tf.random_uniform(shape,initrange[0],initrange[1])
+            else:
+                initial = tf.constant(0.1, shape=shape)
             return tf.Variable(initial)
 
         def variable_summaries(var, name):
@@ -214,15 +191,15 @@ class ddpg():
 
         class nn_layer():
 
-            def __init__(self,input_tensor, input_dim, output_dim, init_range, layer_name, act=tf.nn.relu):
+            def __init__(self,input_tensor, input_dim, output_dim, init_range, layer_name, act=tf.nn.relu, init_bias_rnd= False):
 
                 with tf.name_scope(layer_name):
                     # This Variable will hold the state of the weights for the layer
                     with tf.name_scope('weights'):
-                        self.weights = weight_variable([input_dim, output_dim])
+                        self.weights = weight_variable([input_dim, output_dim],init_range)
                         variable_summaries(self.weights, layer_name + '/weights')
                     with tf.name_scope('biases'):
-                        self.biases = bias_variable([output_dim])
+                        self.biases = bias_variable([output_dim],init_range, init_bias_rnd=False,  )
                         variable_summaries(self.biases, layer_name + '/biases')
                     with tf.name_scope('Wx_plus_b'):
                         preactivate = tf.matmul(input_tensor, self.weights) + self.biases
@@ -257,12 +234,15 @@ class ddpg():
             def make_nn_layer(self):
                 return self.activations
 
+        mean = tf.constant([-0.3, 0], name='batch_mean')
+        variance = tf.constant([0.81, 0.0049], name='batch_variance')
+        x_state_normed = tf.nn.batch_normalization(self.x_state, mean, variance, None, None, 1e-8)
 
         with tf.name_scope('mu_net'):
 
             with tf.name_scope('hidden_1'):
                 initrange = (-1/np.sqrt(self.state_dim), 1/np.sqrt(self.state_dim))
-                n1 = nn_layer(self.x_state, self.state_dim, self.num_neurons_layer1, initrange, 'layer1')
+                n1 = nn_layer(x_state_normed, self.state_dim, self.num_neurons_layer1, initrange, 'layer1')
                 a1 = n1.make_nn_layer()
 
             with tf.name_scope('hidden_2'):
@@ -270,75 +250,81 @@ class ddpg():
                 n2 = nn_layer(a1, self.num_neurons_layer1, self.num_neurons_layer2,initrange, 'layer2')
                 a2 = n2.make_nn_layer()
 
-            initrange = (-1e-3, 1e-3)
-            n3 = nn_layer(a2, self.num_neurons_layer2, self.num_outputs, initrange, layer_name= 'layer3', act=tf.identity)
-            self.y_mu = n3.make_nn_layer()
+            initrange = (-1e-4, 1e-4)
+            n3 = nn_layer(a2, self.num_neurons_layer2, self.num_outputs, initrange, layer_name= 'layer3', act=tf.nn.tanh, init_bias_rnd= True)
+            n3_out = n3.make_nn_layer()
+            self.y_mu =  tf.add(n3_out,tf.constant(1.0, dtype=tf.float32, shape= [1]))
 
 
         with tf.name_scope('mu_net_prime'):
 
             with tf.name_scope('hidden_1'):
-                n1_prime = nn_layer_prime(self.x_state, n1, self.state_dim, self.num_neurons_layer1, 'layer1')
+                n1_prime = nn_layer_prime(x_state_normed, n1, self.state_dim, self.num_neurons_layer1, 'layer1')
                 a1_prime = n1_prime.make_nn_layer()
 
             with tf.name_scope('hidden_2'):
                 n2_prime = nn_layer_prime(a1_prime, n2, self.num_neurons_layer1, self.num_neurons_layer2, 'layer2')
                 a2_prime = n2_prime.make_nn_layer()
 
-            n3_prime= nn_layer_prime(a2_prime,n3, self.num_neurons_layer2, self.num_outputs, 'layer3', act=tf.identity)
-            self.y_mu_prime = n3_prime.make_nn_layer()
+            n3_prime= nn_layer_prime(a2_prime,n3, self.num_neurons_layer2, self.num_outputs, 'layer3', act=tf.nn.tanh)
+            n3_out_prime = n3_prime.make_nn_layer()
+            self.y_mu_prime = tf.add(n3_out_prime,tf.constant(1.0, dtype=tf.float32, shape= [1]))
 
-        x_stateaction = tf.concat(1, [self.x_state, self.x_action], name='concat')
         with tf.name_scope('Q_net'):
 
             with tf.name_scope('hidden_1'):
-                n1q = nn_layer(x_stateaction, self.state_dim, self.num_neurons_layer1, 'layer1')
+                initrange = (-1/np.sqrt(self.state_dim), 1/np.sqrt(self.state_dim))
+                n1q = nn_layer(x_state_normed, self.state_dim, self.num_neurons_layer1,initrange, 'layer1')
                 a1q = n1q.make_nn_layer()
 
             with tf.name_scope('hidden_2'):
-
-                n2q = nn_layer(a1q, self.num_neurons_layer1+ self.action_dim, self.num_neurons_layer2, 'layer2')
+                initrange = (-1/np.sqrt(self.num_neurons_layer1), 1/np.sqrt(self.num_neurons_layer1))
+                conc = tf.concat(concat_dim=1, values=[a1q, self.x_action] , name='concat')
+                n2q = nn_layer(conc, self.num_neurons_layer1+ self.action_dim, self.num_neurons_layer2, initrange, 'layer2')
                 a2q = n2q.make_nn_layer()
 
-            n3q = nn_layer(a2q, self.num_neurons_layer2, self.num_outputs,layer_name= 'layer3', act=tf.identity)
-            self.y_q = n3q.make_nn_layer()
+            initrange = (-1e-3, 1e-3)
+            n3q = nn_layer(a2q, self.num_neurons_layer2, self.num_outputs, initrange, layer_name= 'layer3', act=tf.identity)
+            y_q = n3q.make_nn_layer()
 
         with tf.name_scope('Q_net_prime'):
 
             with tf.name_scope('hidden_1'):
-                n1_primeq = nn_layer_prime(x_stateaction, n1q, self.state_dim + self.action_dim, self.num_neurons_layer1, 'layer1')
+                n1_primeq = nn_layer_prime(x_state_normed, n1q, self.state_dim + self.action_dim, self.num_neurons_layer1, 'layer1')
                 a1_primeq = n1_primeq.make_nn_layer()
 
             with tf.name_scope('hidden_2'):
-                n2_primeq = nn_layer_prime(a1_primeq, n2q, self.num_neurons_layer1, self.num_neurons_layer2, 'layer2')
+                conc = tf.concat(concat_dim=1, values=[a1_primeq, self.x_action] , name='concat')
+                n2_primeq = nn_layer_prime(conc, n2q, self.num_neurons_layer1, self.num_neurons_layer2, 'layer2')
                 a2_primeq = n2_primeq.make_nn_layer()
 
             n3_primeq= nn_layer_prime(a2_primeq,n3, self.num_neurons_layer2, self.num_outputs, 'layer3', act=tf.identity)
             self.y_q_prime = n3_primeq.make_nn_layer()
 
-        with tf.name_scope('mse_q'):
-            squ_diff = tf.pow(self.y_qtargets - self.y_q, 2)
-            with tf.name_scope('total'):
-                self.mean_squared_error = tf.reduce_mean(squ_diff)
-            tf.scalar_summary('mean squared error', self.mean_squared_error)
-
 
         self.learning_rate_actor = tf.placeholder(tf.float32, shape= [], name='learning_rate')
         self.learning_rate_critic = tf.placeholder(tf.float32, shape= [], name='learning_rate')
 
-        with tf.name_scope('train'):
-            self.qtrain_step = tf.train.AdamOptimizer(self.learning_rate_critic).minimize(self.mean_squared_error)
+        ## set up training the Q-Function
+        ql2 = .01
 
+        theta_q = [n1q.weights,n1q.biases,n2q.weights,n2q.biases,n3q.weights,n3q.biases]
+        squ_diff = tf.pow(self.y_qtargets - y_q, 2)
+        wd_q = tf.add_n([ql2 * tf.nn.l2_loss(var) for var in theta_q])  # weight decay
+        self.q_loss = tf.reduce_mean(squ_diff) + wd_q
+        tf.scalar_summary('Qfunc mean squared error', self.q_loss)
+        self.qtrain_step = tf.train.AdamOptimizer(self.learning_rate_critic).minimize(self.q_loss)
+
+        ## set up training the mu-Function
         opt = tf.train.AdamOptimizer(self.learning_rate_actor)
-        var_list = [n1q.weights,n1q.biases,n2q.weights,n2q.biases,n3q.weights,n3q.biases]   #these are all variables from the Q-network
-        dmu_dtheta = tf.gradients(self.y_q, var_list)
-        dQda = tf.gradients(self.y_q, self.x_action)
-        var_grad_multiplied = [tf.matmul(dQda, dmu_dtheta[i]) for i in dmu_dtheta]
-        grads_and_vars = zip(var_grad_multiplied, var_list)
+        theta_mu = [n1.weights,n1.biases,n2.weights,n2.biases,n3.weights,n3.biases]   #these are all variables from the Q-network
+        mu_loss = -tf.reduce_mean(y_q, 0)
+        tf.scalar_summary('Qfunc mean squared error', self.q_loss)
+        grads_vars_p = opt.compute_gradients(mu_loss,theta_mu)
 
         ema_updates = [n1.ema_ap_op, n2.ema_ap_op, n3.ema_ap_op, n1q.ema_ap_op, n2q.ema_ap_op, n3q.ema_ap_op]
-        with tf.control_dependencies(ema_updates+self.qtrain_step):
-            self.mu_train_step = opt.apply_gradients(grads_and_vars)
+        with tf.control_dependencies(ema_updates+[self.qtrain_step]):  #combining all train steps:
+            self.mu_train_step = opt.apply_gradients(grads_vars_p)
 
 
         # Merge all the summaries and write them out to /tmp/mnist_logs (by default)
@@ -349,51 +335,56 @@ class ddpg():
     def get_train_batch(self):
 
         #selecting transitions randomly from the replay memory:
-        indices = np.random.choice(len(self.replay_memory), self.batchsize, replace= False)
+        indices =  np.random.randint(0, len(self.replay_memory), [self.batch_size])
         transition_batch = [self.replay_memory[i] for i in indices]
 
-        states = np.asarray([transition_batch[i][0] for i in range])
-        actions = np.asarray([transition_batch[i][1] for i in range])
-        rewards = np.asarray([transition_batch[i][2] for i in range])
-        states_prime = np.asarray([transition_batch[i][3] for i in range])
+        states = np.asarray([transition_batch[i][0] for i in range(self.batch_size)])
+        actions = np.asarray([transition_batch[i][1] for i in range(self.batch_size)])
+        rewards = np.asarray([transition_batch[i][2] for i in range(self.batch_size)])
+        states_prime = np.asarray([transition_batch[i][3] for i in range(self.batch_size)])
+        term2 = np.asarray([transition_batch[i][4] for i in range(self.batch_size)])
 
-        Qprime = self.eval_Qnet_prime(states_prime, actions)
-        targets = rewards + self.gamma * Qprime
+        Qprime = self.eval_Qnet_prime(states_prime.squeeze(), self.mu_prime(states_prime.squeeze()))
+        Qprime = np.asarray(Qprime).squeeze()
+
+        term2 = 1- term2 #inverting, now 0 means terminated
+
+        targets = rewards + self.gamma * Qprime * term2
 
         return states, actions, targets
 
     def train_networks(self):
 
-        l_r_actor = 1e-4
-        l_r_critic = 1e-3
+        lr_actor = 1e-3
+        lr_critic = 1e-4   #according to Silver dpg-paper the critic should be faster !!
 
         def feed_dict():
 
             xs_state, xs_action, y_qtargets = self.get_train_batch()
 
-            return {self.x_state: xs_state,
-                    self.x_action: xs_action,
-                    self.y_qtargets: y_qtargets,
-                    self.learning_rate_actor: l_r_actor,
-                    self.learning_rate_critic: l_r_critic,
+            return {self.x_state: xs_state.squeeze(),
+                    self.x_action: xs_action.squeeze().reshape(self.batch_size,1),
+                    self.y_qtargets: y_qtargets.squeeze().reshape(self.batch_size,1),
+                    self.learning_rate_actor: lr_actor,
+                    self.learning_rate_critic: lr_critic,
                     }
 
         dict_ = feed_dict()
-        summary, _, mse_val = self.sess.run([self.merged, self.mu_train_step, self.mean_squared_error], feed_dict= dict_)
+        summary, _, mse_val = self.sess.run([self.merged, self.mu_train_step, self.q_loss], feed_dict= dict_)
 
         if self.step % 10 == 0:
             self.train_writer.add_summary(summary, self.step)
 
         self.step += 1
 
-        if self.step % 500 == 0:
+        if self.step % 100 == 0:
             print('result after minibatch no. {} : mean squared error: {}'.format(self.step, mse_val))
             print('batch train data states', dict_[self.x_state])
             print('batch train data actions', dict_[self.x_action])
             print('batch train data actions', dict_[self.y_qtargets])
             self.plot_learned_mu()
 
-            num_steps= self.test_learned_policy()
+            num_steps= self.run_episode(test_run=True)
             print('episode length using learned policy:',num_steps)
 
     def mu(self, state):
@@ -405,40 +396,21 @@ class ddpg():
     def eval_Qnet_prime(self, state, action):
         return self.y_q_prime.eval(feed_dict= {self.x_state : state, self.x_action: action})
 
-    def test_learned_policy(self, limit=10000, enable_render=False):
 
-        def apply_limits(action):
-            if action < self.env.action_limits[0]:
-                action = self.env.action_limits[0]
-            if action > self.env.action_limits[1]:
-                action = self.env.action_limits[1]
-            return action
+    def plot_episode_lengths(self, train):
 
-        episode = []
-        state = self.env.reset()
+        fig = plt.figure()
+        if train:
+            plt.plot(self.train_lengths)
+        else:
+            plt.plot(self.test_lengths)
 
-        count = 0
-        done = False
+        plt.yscale('log')
 
-        while ( not done ):
+        plt.xlabel("episodes")
+        plt.ylabel("timesteps")
 
-            if len(episode)>limit:
-                return episode
-
-            count += 1
-
-            print('state',state)
-            action = self.mu(state.reshape((1,2)))[0]
-            print(action)
-            action = apply_limits(action)
-
-            state, reward, done, info = self.env.step(action)
-
-            if enable_render:
-                self.env.render()
-                # print("step no. {}".format(count))
-
-        return count
+        plt.show()
 
     def main(self):
         if tf.gfile.Exists(self.summaries_dir):
@@ -446,6 +418,9 @@ class ddpg():
         tf.gfile.MakeDirs(self.summaries_dir)
 
         self.initialize_training(self.sess)
+        self.start_training()
 
+if __name__ == '__main__':
 
-
+    car = ddpg()
+    car.main()
