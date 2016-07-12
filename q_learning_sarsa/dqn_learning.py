@@ -1,4 +1,5 @@
 from __future__ import print_function
+from __future__ import division
 import numpy as np
 
 np.set_printoptions(threshold=np.inf)
@@ -34,8 +35,11 @@ class q_learning():
                  descent_method = 'grad',
                  dropout_keep_prob = 1.0,
                  ema_decay_rate = 0.999,
-                 init_weights = None
+                 init_weights = None,
+                 num_steps_until_train_step = None
                  ):
+        if num_steps_until_train_step is None:
+            num_steps_until_train_step = nn_batch_size
 
         self.env = gym.make(environment)
         self.select_env = environment
@@ -191,7 +195,7 @@ class q_learning():
                         self.epsilon -= (self.init_epsilon - self.end_epsilon)*(1./self.exploration_decrease_length)
 
             if (it + 1) % 5 == 0:
-                print("Episode %d" % (it))
+                print("Episode %d" % (it), "total samples", self.qnn.samples_count, "train steps", self.qnn.training_steps_count)
                 if (done): print("Length %d" % (self.episode_lengths[-1]))
 
             if (it + 1) % 100 == 0:

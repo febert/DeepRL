@@ -41,12 +41,18 @@ class qnn:
         self.init_weights = init_weights
         print("init_weights", self.init_weights)
 
-        def weight_variable(shape):
+        def weight_variable(shape, fan_in=True):
             """
             Create a weight variable with appropriate initialization.
             Random to break symmetries.
             """
-            initial = tf.truncated_normal(shape, stddev=self.init_weights)
+            if fan_in:
+                std=1.0/np.sqrt(shape[0])
+            else:
+                std=self.init_weights
+            print('weights std =', std)
+
+            initial = tf.truncated_normal(shape, stddev=std)
             return tf.Variable(initial)
 
         def bias_variable(shape):
