@@ -274,6 +274,7 @@ class ddpg():
         indices =  np.random.randint(0, len(self.replay_memory), [self.batch_size])
         transition_batch = [self.replay_memory[i] for i in indices]
 
+
         states = np.asarray([transition_batch[i][0].squeeze() for i in range(self.batch_size)])
         actions = np.asarray([transition_batch[i][1] for i in range(self.batch_size)])
         rewards = np.asarray([transition_batch[i][2] for i in range(self.batch_size)])

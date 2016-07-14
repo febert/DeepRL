@@ -31,19 +31,11 @@ from matplotlib.colors import LogNorm
 class ddpg():
 
     def __init__(self,
-                 environment = 'MountainCarContinuous-v0',
+                 # environment = 'MountainCarContinuous-v0',
+                 environment = 'InvertedPendulum-v1',
                  ):
 
-        self.gamma = 0.9
-
-        self.sigma = np.identity(2)*0.5
-
-
-        self.num_outputs = 1
-        self.action_dim = 1
-        self.state_dim = 2
-        self.batch_size = 50
-        self.samples_count = 0
+        self.gamma = 0.99
 
         self.sess = tf.InteractiveSession()
         self.l1 = 400  #neurons layer 1
@@ -65,14 +57,31 @@ class ddpg():
         self.env = gym.make(environment)
         self.select_env = environment
 
+        self.num_outputs = 1
+        self.action_dim = self.env.action_space.shape[0]
+        self.state_dim = self.env.observation_space.shape[0]
+
+        print('state dim', self.state_dim)
+        print('action dim', self.action_dim)
+
+
+        self.batch_size = 32
+
+        self.samples_count = 0
+
         self.action_limits = (self.env.action_space.low, self.env.action_space.high)
         print('action limits', self.action_limits)
-        actionmean = (self.action_limits[0]+ self.action_limits[1])/2
+        self.actionmean = (self.action_limits[0]+ self.action_limits[1])/2
+        print('action mean', self.actionmean)
 
-        self.ou_process = ornstein_uhlenbeck(ndim= 1, theta= 0.15, sigma= .3, delta_t= 1)
+        self.ou_process = ornstein_uhlenbeck(ndim= 1, theta= 0.15, sigma= .2, delta_t= 1)
 
         self.obs_low = self.env.observation_space.low
         self.obs_high = self.env.observation_space.high
+
+    def rescale_action(self, action):
+        ascale = self.env.action_space.high- self.env.action_space.low
+        return action*ascale + self.actionmean
 
     def run_episode(self, enable_render=False, limit=5000, test_run = True):
 
@@ -88,18 +97,20 @@ class ddpg():
                 return count
 
             count += 1
-            state = np.squeeze(state).reshape((1,2))  # convert (2,1) array in to (2,1)
-            if test_run:
-                action = self.eval_mu(state)
-            else:
-                action = self.eval_mu(state) + self.ou_process.ou_step()
+            state = np.squeeze(state).reshape((1,self.state_dim))  # convert (2,1) array in to (2,1)
 
+            if test_run:
+                action_raw = self.eval_mu(state)
+            else:
+                action_raw = self.eval_mu(state) + self.ou_process.ou_step()
+            action = self.rescale_action(action_raw)
             action = self.apply_limits(action)
             action = action.squeeze()
+
             state_prime, reward, done, _ = self.env.step(action)
 
             if not test_run:
-                self.replay_memory.append((state, action, reward, state_prime, done))
+                self.replay_memory.append((state, action_raw, reward, state_prime, done))
                 self.samples_count += 1
 
                 if (len(self.replay_memory) > self.warmup) and (self.samples_count % (self.batch_size/2) == 0):
@@ -113,12 +124,12 @@ class ddpg():
         return count
 
 
-    def start_training(self, max_episodes=1000, dataname ='unnamed_data', save = False, max_episode_length = 10000):
+    def start_training(self,maxstep = 1e6, dataname ='unnamed_data', save = False, max_episode_length = 10000):
 
-        for it in range(max_episodes):
-
-            print('starting episode no',it )
-            print('replay size',self.samples_count)
+        it = 0
+        while self.step < maxstep:
+            if it % 1000 == 0:
+                print('replay size',len(self.replay_memory))
 
             # run episode
             episode_length = self.run_episode(test_run= False, enable_render=False, limit= max_episode_length)
@@ -128,13 +139,15 @@ class ddpg():
             #     self.plot_learned_mu()
             #     self.plot_replay_memory_2d_state_histogramm()
 
-            if (it+1) % 5 == 0:
+            if (it+1) % 500 == 0:
                 # perform a test run with the target policy:
                 self.test_lengths.append(self.run_episode(test_run= True, enable_render=False))
 
-            if (it+1)%10 == 0:
+            if (it+1) % 1000 == 0:
                 self.plot_episode_lengths(train= True)
                 self.plot_episode_lengths(train= False)
+
+            it+=1
 
     def hist_summaries(self,*args):
         return tf.merge_summary([tf.histogram_summary(t.name, t) for t in args])
@@ -161,10 +174,9 @@ class ddpg():
             h3 = tf.identity(tf.matmul(h2, theta[4]) + theta[5], name='h3')
             action = tf.nn.tanh(h3, name='h4-action')
 
-            action_add =  tf.add(action,tf.constant(1.0, dtype=tf.float32, shape= [1]))
+            summary = self.hist_summaries(h0, h1, h2, h3, action)
+            return action, summary
 
-            summary = self.hist_summaries(h0, h1, h2, h3, action_add)
-            return action_add, summary
 
     def create_theta_q(self,dimO, dimA):
         with tf.variable_scope("theta_q"):
@@ -200,25 +212,28 @@ class ddpg():
         self.theta_mu_prime, update_mu_averages = self.exponential_moving_averages(self.theta_mu, 0.001)
         self.theta_q_prime, update_q_averages = self.exponential_moving_averages(self.theta_q, 0.001)
 
-        self.state = tf.placeholder(tf.float32, [None, self.state_dim], name='x-states')
+        self.state_raw = tf.placeholder(tf.float32, [None, self.state_dim], name='x-states')
 
-        mean = tf.constant([-0.3, 0], name='batch_mean')
-        variance = tf.constant([0.81, 0.0049], name='batch_variance')
-        self.state_normed = tf.nn.batch_normalization(self.state, mean, variance, None, None, 1e-8)
+        if self.select_env == 'MountainCarContinuous-v0':
+            mean = tf.constant([-0.3, 0], name='batch_mean')
+            variance = tf.constant([0.81, 0.0049], name='batch_variance')
+            self.state = tf.nn.batch_normalization(self.state_raw, mean, variance, None, None, 1e-8)
+        else:
+            self.state = self.state_raw
 
-        self.mu, sum_p = self.mu_net(self.state_normed, self.theta_mu)
+        self.mu, sum_p = self.mu_net(self.state, self.theta_mu)
 
         pl2 = .0
-        ql2 = .0 # .01  #set weight decay
+        ql2 = .01 # .01  #set weight decay
         self.learning_rate_actor = tf.placeholder(tf.float32, shape= [], name='actor_learning_rate')
         self.learning_rate_critic = tf.placeholder(tf.float32, shape= [], name='critic_learning_rate')
 
 
         # test
-        q, sum_q = self.q_net(self.state_normed, self.mu, self.theta_q)
+        self.q, sum_q = self.q_net(self.state, self.mu, self.theta_q)
         # training
         # policy loss
-        meanq = tf.reduce_mean(q, 0)
+        meanq = tf.reduce_mean(self.q, 0)
         wd_p = tf.add_n([pl2 * tf.nn.l2_loss(var) for var in self.theta_mu])  # weight decay
         self.mu_loss = -meanq + wd_p
         # policy optimization
@@ -231,24 +246,26 @@ class ddpg():
         # q optimization
         self.act_train = tf.placeholder(tf.float32, [None, self.action_dim], name='actions')
         self.rew = tf.placeholder(tf.float32, [None, 1], name='rewards')
-        self.state_prime = tf.placeholder(tf.float32, [None, self.state_dim], name='states_prime')
-        state_prime_normed = tf.nn.batch_normalization(self.state_prime, mean, variance, None, None, 1e-8)
+        self.state_prime_raw = tf.placeholder(tf.float32, [None, self.state_dim], name='states_prime')
+        if self.select_env == "MountainCarContinuous-v0":
+            state_prime = tf.nn.batch_normalization(self.state_prime_raw, mean, variance, None, None, 1e-8)
+        else:
+            state_prime = self.state_prime_raw
         self.term2 = tf.placeholder(tf.bool, [None, 1], name='term2')
 
         # q
-        q_train, sum_qq = self.q_net(self.state_normed, self.act_train, self.theta_q)
+        self.q_train, sum_qq = self.q_net(self.state, self.act_train, self.theta_q)
 
         # q targets
-        act2, sum_p2 = self.mu_net(state_prime_normed, theta=self.theta_mu_prime)
-        self.q2, sum_q2 = self.q_net(state_prime_normed, act2, theta=self.theta_q_prime)
+        act2, sum_p2 = self.mu_net(state_prime, theta=self.theta_mu_prime)
+        self.q2, sum_q2 = self.q_net(state_prime, act2, theta=self.theta_q_prime)
         q_target = tf.stop_gradient(tf.select(self.term2, self.rew, self.rew + self.gamma * tf.reshape(self.q2, [self.batch_size,1]) ))
 
         # q loss
-        td_error = q_train - q_target
+        td_error = self.q_train - q_target
         ms_td_error = tf.reduce_mean(tf.square(td_error), 0)
         wd_q = tf.add_n([ql2 * tf.nn.l2_loss(var) for var in self.theta_q])  # weight decay
         self.q_loss = ms_td_error + wd_q
-
         # q optimization
         optim_q = tf.train.AdamOptimizer(learning_rate=self.learning_rate_critic)
         grads_and_vars_q = optim_q.compute_gradients(self.q_loss, var_list=self.theta_q)
@@ -258,7 +275,7 @@ class ddpg():
 
 
         # logging
-        log_obs = [] if self.state_dim > 20 else [tf.histogram_summary("obs/" + str(i), self.state[:,i]) for i in range(self.state_dim)]
+        log_obs = [] if self.state_dim > 20 else [tf.histogram_summary("obs/" + str(i), self.state_raw[:, i]) for i in range(self.state_dim)]
         log_act = [] if self.action_dim > 20 else [tf.histogram_summary("act/inf" + str(i), self.mu[:, i]) for i in
                                            range(self.action_dim)]
         log_act2 = [] if self.action_dim > 20 else [tf.histogram_summary("act/train" + str(i), self.act_train[:, i]) for i in
@@ -289,26 +306,25 @@ class ddpg():
 
     def train_networks(self):
 
-        lr_actor = 1e-5
-        lr_critic = 1e-4   #according to Silver dpg-paper the critic should be faster !!
+        lr_actor = 1e-4
+        lr_critic = 1e-3   #according to Silver dpg-paper the critic should be faster !!
 
         def feed_dict():
 
             states, action, reward, states_prime, term2 = self.get_train_batch()
 
-            return {self.state: states.squeeze().reshape(self.batch_size,2),
+            return {self.state_raw: states.squeeze().reshape(self.batch_size, self.state_dim),
                     self.act_train: action.squeeze().reshape(self.batch_size,1),
                     self.rew: reward.squeeze().reshape(self.batch_size,1),
-                    self.state_prime: states_prime.squeeze().reshape(self.batch_size,2),
+                    self.state_prime_raw: states_prime.squeeze().reshape(self.batch_size, self.state_dim),
                     self.term2: term2.squeeze().reshape(self.batch_size,1),
                     self.learning_rate_actor: lr_actor,
                     self.learning_rate_critic: lr_critic,
                     }
 
-
         dict_ = feed_dict()
         summary, _, mse_val = self.sess.run([self.merged, self.q_train_step, self.q_loss], feed_dict= dict_)
-        summary, _, _ = self.sess.run([self.merged, self.mu_train_step, self.mu_loss], feed_dict= dict_)
+        self.sess.run([self.mu_train_step ], feed_dict= dict_)
 
         if self.step % 10 == 0:
             self.train_writer.add_summary(summary, self.step)
@@ -317,8 +333,9 @@ class ddpg():
             print('result after minibatch no. {} : mean squared error: {}'.format(self.step, mse_val))
             # print('batch train data states', dict_[self.x_states])
             # print('batch train data actions', dict_[self.x_action])
-            self.plot_learned_mu()
-            self.plot_replay_memory_2d_state_histogramm()
+            # self.plot_learned_mu()
+            # self.plot_replay_memory_2d_state_histogramm()
+            # self.plot_q_func()
 
             # print('qs: ', self.q.eval(feed_dict = {self.x_states: dict_[self.x_states], self.x_action: dict_[self.x_action]}))
 
@@ -327,7 +344,10 @@ class ddpg():
         self.step += 1
 
     def eval_mu(self, state):
-        return self.mu.eval(feed_dict= {self.state : state})
+        return self.mu.eval(feed_dict= {self.state_raw : state})
+
+    def eval_q(self, state, action):
+        return self.q_train.eval(feed_dict= {self.state_raw : state, self.act_train : action})
 
 
     def apply_limits(self,action):
@@ -379,19 +399,31 @@ class ddpg():
             plt.colorbar()
             plt.show()
 
-    # def plot_q_func(self):
-    #     if self.state_dim == 2:
-    #         rm=np.array(self.replay_memory)
-    #         states, _,_,_,_ = zip(*rm)
-    #         states_np = np.array(states)
-    #         states_np = np.squeeze(states_np)
-    #
-    #         x,v = zip(*states_np)
-    #         plt.hist2d(x, v, bins=40, norm=LogNorm())
-    #         plt.xlabel("position")
-    #         plt.ylabel("velocity")
-    #         plt.colorbar()
-    #         plt.show()
+    def plot_q_func(self):
+        print('plotting the Qfunction')
+        for action in np.linspace(self.action_limits[0],self.action_limits[1],num=5):
+            print('action {}'.format(action))
+            resolution = 20
+            x_range = np.linspace(self.obs_low[0], self.obs_high[0], resolution)
+            v_range = np.linspace(self.obs_low[1], self.obs_high[1], resolution)
+
+            # get actions in a grid
+            vals = np.zeros((resolution, resolution))
+            for i, x in enumerate(x_range):
+                for j, v in enumerate(v_range):
+                    x_ = np.array([x,v],dtype=np.float32).reshape((1,2))
+                    action = action.reshape((1,1))
+                    vals[j,i]= self.eval_q(x_, action)[0]
+
+            fig = plt.figure()
+
+            ax = fig.add_subplot(111)
+            X, Y = np.meshgrid(x_range, v_range)
+            im = ax.pcolormesh(X, Y, vals)
+            fig.colorbar(im)
+            ax.set_xlabel("x")
+            ax.set_ylabel("v")
+            plt.show()
 
     def plot_learned_mu(self):
 
@@ -408,7 +440,7 @@ class ddpg():
                 x_ = np.array([x,v],dtype=np.float32).reshape((1,2))
                 vals[j,i]= self.eval_mu(x_)[0]
 
-        print('muvals', vals)
+        # print('muvals', vals)
 
         fig = plt.figure()
 
