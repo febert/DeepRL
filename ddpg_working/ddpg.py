@@ -119,7 +119,7 @@ class Agent:
 
         # tf functions
         with self.sess.as_default():
-            self._act_test = Fun(obs, act_test)
+            self.act_test = Fun(obs, act_test)
             self._act_expl = Fun(obs, act_expl)
             self._reset = Fun([], self.ou_reset)
             self._train_q = Fun([obs, act_train, rew, obs2, term2], [train_q], log_train, self.writer)
@@ -144,7 +144,7 @@ class Agent:
 
     def act(self, test=False):
         obs = np.expand_dims(self.observation, axis=0)
-        action = self._act_test(obs) if test else self._act_expl(obs)
+        action = self.act_test(obs) if test else self._act_expl(obs)
         self.action = np.atleast_1d(np.squeeze(action, axis=0))  # TODO: remove this hack
         return self.action
 
@@ -159,6 +159,7 @@ class Agent:
             self.rm.enqueue(obs1, term, self.action, rew)
 
             if self.t > FLAGS.warmup:
+                print('warmed up')
                 self.train()
 
             elif FLAGS.warmq and self.rm.n > 1000:

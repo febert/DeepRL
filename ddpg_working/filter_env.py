@@ -36,6 +36,9 @@ def makeFilteredEnv(env):
             self.a_c = (h + l) / 2.
             self.a_sc = sc / 2.
 
+            print('action center a_c', self.a_c)
+            print('action scale a_c', self.a_sc)
+
             # Rewards
             self.r_sc = 1.
             self.r_c = 0.
@@ -70,8 +73,11 @@ def makeFilteredEnv(env):
 
         def step(self, action):
 
-            ac_f = np.clip(self.filter_action(action), self.action_space.low, self.action_space.high)
+            # ac_f = np.clip(self.filter_action(action), self.action_space.low, self.action_space.high)
+            ac_clipped = np.clip(action, self.action_space.low, self.action_space.high)
+            ac_f = self.filter_action(ac_clipped)
 
+            # print(ac_f)
             obs, reward, term, info = env_type.step(self, ac_f)  # super function
             obs = obs.squeeze()
 
