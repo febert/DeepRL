@@ -159,7 +159,7 @@ class Agent:
             self.rm.enqueue(obs1, term, self.action, rew)
 
             if self.t > FLAGS.warmup:
-                print('warmed up')
+                # print('warmed up')
                 self.train()
 
             elif FLAGS.warmq and self.rm.n > 1000:

@@ -31,22 +31,22 @@ from matplotlib.colors import LogNorm
 class ddpg():
 
     def __init__(self,
-                 # environment = 'MountainCarContinuous-v0',
-                 environment = 'InvertedPendulum-v1',
+                 environment = 'MountainCarContinuous-v0',
+                 # environment = 'InvertedPendulum-v1',
                  ):
 
         self.gamma = 0.99
 
         self.sess = tf.InteractiveSession()
-        self.l1 = 400  #neurons layer 1
-        self.l2 = 300  #neurons layer 2
+        self.l1 = 100  #neurons layer 1
+        self.l2 = 100  #neurons layer 2
 
         self.step = 0
 
         self.summaries_dir = './logging/ddpg'
 
         replay_memory_size = 5e5 #number of transitions to be stored in replay buffer
-        self.warmup = 5e4
+        self.warmup = 3e4
 
         self.train_lengths = []
         self.test_lengths = []
@@ -128,8 +128,8 @@ class ddpg():
 
         it = 0
         while self.step < maxstep:
-            if it % 1000 == 0:
-                print('replay size',len(self.replay_memory))
+            # if it % 1000 == 0:
+            #     print('replay size',len(self.replay_memory))
 
             # run episode
             episode_length = self.run_episode(test_run= False, enable_render=False, limit= max_episode_length)
@@ -139,11 +139,11 @@ class ddpg():
             #     self.plot_learned_mu()
             #     self.plot_replay_memory_2d_state_histogramm()
 
-            if (it+1) % 500 == 0:
+            if (it+1) % 5 == 0:
                 # perform a test run with the target policy:
                 self.test_lengths.append(self.run_episode(test_run= True, enable_render=False))
 
-            if (it+1) % 1000 == 0:
+            if (it+1) % 10 == 0:
                 self.plot_episode_lengths(train= True)
                 self.plot_episode_lengths(train= False)
 
@@ -164,7 +164,9 @@ class ddpg():
                     tf.Variable(self.fanin_init([self.l1, self.l2]), name='2w'),
                     tf.Variable(self.fanin_init([self.l2], self.l1), name='2b'),
                     tf.Variable(tf.random_uniform([self.l2, dimA], -3e-3, 3e-3), name='3w'),
-                    tf.Variable(tf.random_uniform([dimA], -3e-3, 3e-3), name='3b')]
+                    tf.Variable(tf.random_uniform([dimA], -3e-3, 3e-3), name='3b'),
+                    #tf.Variable(tf.random_uniform([dimA], 0, 1e-2), name='3b')
+                    ]
 
     def mu_net(self, obs, theta, name='policy'):
         with tf.variable_op_scope([obs], name, name):
@@ -173,6 +175,7 @@ class ddpg():
             h2 = tf.nn.relu(tf.matmul(h1, theta[2]) + theta[3], name='h2')
             h3 = tf.identity(tf.matmul(h2, theta[4]) + theta[5], name='h3')
             action = tf.nn.tanh(h3, name='h4-action')
+            # action = tf.identity(h3, name='h4-action')
 
             summary = self.hist_summaries(h0, h1, h2, h3, action)
             return action, summary
@@ -233,10 +236,11 @@ class ddpg():
         self.q, sum_q = self.q_net(self.state, self.mu, self.theta_q)
         # training
         # policy loss
-        meanq = tf.reduce_mean(self.q, 0)
-        wd_p = tf.add_n([pl2 * tf.nn.l2_loss(var) for var in self.theta_mu])  # weight decay
-        self.mu_loss = -meanq + wd_p
+        meanq = tf.reduce_mean(self.q)
+        # wd_p = tf.add_n([pl2 * tf.nn.l2_loss(var) for var in self.theta_mu])  # weight decay
+        self.mu_loss = -meanq #+ wd_p
         # policy optimization
+        # optim_p = tf.train.GradientDescentOptimizer(learning_rate=self.learning_rate_actor)
         optim_p = tf.train.AdamOptimizer(learning_rate=self.learning_rate_actor)
         grads_and_vars_p = optim_p.compute_gradients(self.mu_loss, var_list=self.theta_mu)
         optimize_p = optim_p.apply_gradients(grads_and_vars_p)
@@ -263,10 +267,11 @@ class ddpg():
 
         # q loss
         td_error = self.q_train - q_target
-        ms_td_error = tf.reduce_mean(tf.square(td_error), 0)
+        ms_td_error = tf.reduce_mean(tf.square(td_error))
         wd_q = tf.add_n([ql2 * tf.nn.l2_loss(var) for var in self.theta_q])  # weight decay
         self.q_loss = ms_td_error + wd_q
         # q optimization
+        # optim_q = tf.train.GradientDescentOptimizer(learning_rate=self.learning_rate_critic)
         optim_q = tf.train.AdamOptimizer(learning_rate=self.learning_rate_critic)
         grads_and_vars_q = optim_q.compute_gradients(self.q_loss, var_list=self.theta_q)
         optimize_q = optim_q.apply_gradients(grads_and_vars_q)
@@ -283,6 +288,9 @@ class ddpg():
         log_misc = [sum_p, sum_qq, tf.histogram_summary("td_error", td_error)]
         log_grad = [self.grad_histograms(grads_and_vars_p), self.grad_histograms(grads_and_vars_q)]
         log_train = log_obs + log_act + log_act2 + log_misc + log_grad
+
+        tf.scalar_summary('mean squared tderror',ms_td_error )
+        tf.scalar_summary('qloss',self.mu_loss )
 
 
         # Merge all the summaries and write them out to /tmp/mnist_logs (by default)
@@ -329,13 +337,13 @@ class ddpg():
         if self.step % 10 == 0:
             self.train_writer.add_summary(summary, self.step)
 
-        if self.step % 100 == 0:
+        if self.step % 1000 == 0:
             print('result after minibatch no. {} : mean squared error: {}'.format(self.step, mse_val))
             # print('batch train data states', dict_[self.x_states])
             # print('batch train data actions', dict_[self.x_action])
-            # self.plot_learned_mu()
-            # self.plot_replay_memory_2d_state_histogramm()
-            # self.plot_q_func()
+            self.plot_learned_mu()
+            self.plot_replay_memory_2d_state_histogramm()
+            self.plot_q_func()
 
             # print('qs: ', self.q.eval(feed_dict = {self.x_states: dict_[self.x_states], self.x_action: dict_[self.x_action]}))
 

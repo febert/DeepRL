@@ -9,3 +9,5 @@ Tensorflow/regressiontest/
 dpg/regressiontest/
 dpg/logging/
 DDPG_github
+ddpg_working/ddpg-results
+NAF/ddpg-results

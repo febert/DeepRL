@@ -10,8 +10,8 @@ import plotting
 flags = tf.app.flags
 FLAGS = flags.FLAGS
 flags.DEFINE_boolean('upload', False, 'upload to gym (requires evironment variable OPENAI_GYM_API_KEY)')
-flags.DEFINE_string('env', 'MountainCarContinuous-v0', 'gym environment')
-# flags.DEFINE_string('env', 'InvertedPendulum-v1', 'gym environment')
+# flags.DEFINE_string('env', 'MountainCarContinuous-v0', 'gym environment')
+flags.DEFINE_string('env', 'Reacher-v1', 'gym environment')
 flags.DEFINE_integer('train', 10000, 'training time between tests. use 0 for test run only')
 flags.DEFINE_integer('test', 10000, 'testing time between training')
 # flags.DEFINE_integer('train', 10000, 'training time between tests. use 0 for test run only')
@@ -74,7 +74,7 @@ class Experiment:
                 if it % 10== 0:
                     testlengths.append(-self.run_episode(test=True))
 
-                if it % 1 == 0:
+                if it % 10 == 0:
                     plotting.plot_episode_lengths(episodelengths)
                     plotting.plot_episode_lengths(testlengths)
                     plotting.plot_replay_memory_2d_state_histogramm(self.agent.rm.observations)
@@ -147,8 +147,6 @@ class Experiment:
 
             R += reward
             t += 1
-
-            self.env.render()
 
         return R
 
