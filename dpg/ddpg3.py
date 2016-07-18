@@ -37,9 +37,14 @@ class ddpg():
 
         self.gamma = 0.99
 
-        self.sess = tf.InteractiveSession()
-        self.l1 = 100  #neurons layer 1
-        self.l2 = 100  #neurons layer 2
+        # start tf session
+        self.sess = tf.InteractiveSession(config=tf.ConfigProto(
+            inter_op_parallelism_threads=4,
+            log_device_placement=False,
+            allow_soft_placement=True))
+
+        self.l1 = 400  #neurons layer 1
+        self.l2 = 300  #neurons layer 2
 
         self.step = 0
 
@@ -56,6 +61,30 @@ class ddpg():
         # environment specific:
         self.env = gym.make(environment)
         self.select_env = environment
+
+        # # STATE NORMALIZATION
+        # print('Calculating normalization by random action sampling...')
+        # states = []
+        #
+        # while len(states) < 1e5:
+        #     self.env.reset()
+        #     done = False
+        #     while not done:
+        #         state, _, done, _ = self.env.step(self.env.action_space.sample())
+        #         states.append(state.squeeze())
+        #
+        # self.normalization_mean = np.mean(states, axis=(0)).astype(np.float32)
+        # self.normalization_var = np.var(states, axis=(0)).astype(np.float32)
+        #
+        # print('montecarlo mean:', self.normalization_mean)
+        # print('montecarlo var:', self.normalization_var)
+
+        # Pendulum
+        # var = [  4.22701007e-03,   1.98672228e-02,   9.07489777e-01,   4.62239027e+00]
+
+        # Mountaincar
+        # mean = [ -5.16865671e-01   1.22739366e-05]
+        # var = [ 0.1141372   0.00058848]
 
         self.num_outputs = 1
         self.action_dim = self.env.action_space.shape[0]
@@ -80,13 +109,14 @@ class ddpg():
         self.obs_high = self.env.observation_space.high
 
     def rescale_action(self, action):
-        ascale = self.env.action_space.high- self.env.action_space.low
+        ascale = (self.env.action_space.high- self.env.action_space.low)/2
         return action*ascale + self.actionmean
 
     def run_episode(self, enable_render=False, limit=5000, test_run = True):
 
         state = self.env.reset()
         self.ou_process.reset()
+        self.sess.run([self.ou_reset])
 
         count = 0
         done = False
@@ -103,6 +133,8 @@ class ddpg():
                 action_raw = self.eval_mu(state)
             else:
                 action_raw = self.eval_mu(state) + self.ou_process.ou_step()
+                # action_raw = self.eval_expl(state)
+
             action = self.rescale_action(action_raw)
             action = self.apply_limits(action)
             action = action.squeeze()
@@ -121,6 +153,7 @@ class ddpg():
             if enable_render:
                 self.env.render()
 
+
         return count
 
 
@@ -138,12 +171,19 @@ class ddpg():
             # if it% 5== 0:
             #     self.plot_learned_mu()
             #     self.plot_replay_memory_2d_state_histogramm()
+            if self.select_env == 'MountainCarContinuous-v0':
+                test_freq = 5
+                plot_freq = 10
 
-            if (it+1) % 5 == 0:
+            if self.select_env == 'InvertedPendulum-v1':
+                test_freq = 100
+                plot_freq = 1000
+
+            if (it+1) % test_freq == 0:
                 # perform a test run with the target policy:
                 self.test_lengths.append(self.run_episode(test_run= True, enable_render=False))
 
-            if (it+1) % 10 == 0:
+            if (it+1) % plot_freq == 0:
                 self.plot_episode_lengths(train= True)
                 self.plot_episode_lengths(train= False)
 
@@ -153,9 +193,14 @@ class ddpg():
         return tf.merge_summary([tf.histogram_summary(t.name, t) for t in args])
 
     def fanin_init(self, shape, fanin=None):
+        if fanin != None:
+            return tf.constant(0.,shape= shape)
+
         fanin = fanin or shape[0]
         v = 1 / np.sqrt(fanin)
-        return tf.random_uniform(shape, minval=-v, maxval=v)
+
+        # tf.random_uniform(shape, minval=-v, maxval=v)
+        return tf.truncated_normal(shape, v)
 
     def create_theta_p(self,dimO, dimA):
         with tf.variable_scope("theta_p"):
@@ -163,9 +208,10 @@ class ddpg():
                     tf.Variable(self.fanin_init([self.l1], dimO), name='1b'),
                     tf.Variable(self.fanin_init([self.l1, self.l2]), name='2w'),
                     tf.Variable(self.fanin_init([self.l2], self.l1), name='2b'),
-                    tf.Variable(tf.random_uniform([self.l2, dimA], -3e-3, 3e-3), name='3w'),
-                    tf.Variable(tf.random_uniform([dimA], -3e-3, 3e-3), name='3b'),
-                    #tf.Variable(tf.random_uniform([dimA], 0, 1e-2), name='3b')
+                    # tf.Variable(tf.random_uniform([self.l2, dimA], -3e-3, 3e-3), name='3w'),
+                    # tf.Variable(tf.random_uniform([dimA], -3e-3, 3e-3), name='3b'),
+                    tf.Variable(tf.random_uniform([self.l2, dimA], 0, 0), name='3w'),
+                    tf.Variable(tf.random_uniform([dimA], 0, 0), name='3b'),
                     ]
 
     def mu_net(self, obs, theta, name='policy'):
@@ -175,7 +221,6 @@ class ddpg():
             h2 = tf.nn.relu(tf.matmul(h1, theta[2]) + theta[3], name='h2')
             h3 = tf.identity(tf.matmul(h2, theta[4]) + theta[5], name='h3')
             action = tf.nn.tanh(h3, name='h4-action')
-            # action = tf.identity(h3, name='h4-action')
 
             summary = self.hist_summaries(h0, h1, h2, h3, action)
             return action, summary
@@ -187,8 +232,11 @@ class ddpg():
                     tf.Variable(self.fanin_init([self.l1], dimO), name='1b'),
                     tf.Variable(self.fanin_init([self.l1 + dimA, self.l2]), name='2w'),
                     tf.Variable(self.fanin_init([self.l2], self.l1 + dimA), name='2b'),
-                    tf.Variable(tf.random_uniform([self.l2, 1], -3e-4, 3e-4), name='3w'),
-                    tf.Variable(tf.random_uniform([1], -3e-4, 3e-4), name='3b')]
+                    # tf.Variable(tf.random_uniform([self.l2, 1], -3e-4, 3e-4), name='3w'),
+                    # tf.Variable(tf.random_uniform([1], -3e-4, 3e-4), name='3b'),
+                    tf.Variable(tf.random_uniform([self.l2, 1], 0, 0), name='3w'),
+                    tf.Variable(tf.random_uniform([1], 0, 0), name='3b')]
+
 
     def q_net(self,obs, act, theta, name="qfunction"):
         with tf.variable_op_scope([obs, act], name, name):
@@ -218,11 +266,19 @@ class ddpg():
         self.state_raw = tf.placeholder(tf.float32, [None, self.state_dim], name='x-states')
 
         if self.select_env == 'MountainCarContinuous-v0':
-            mean = tf.constant([-0.3, 0], name='batch_mean')
-            variance = tf.constant([0.81, 0.0049], name='batch_variance')
+            # mean = tf.constant(self.normalization_mean, name='batch_mean')
+            # variance = tf.constant(self.normalization_var, name='batch_variance')
+            mean = tf.constant([ -5.16865671e-01 ,  1.22739366e-05], name='batch_mean')
+            variance = tf.constant([ 0.1141372,   0.00058848], name='batch_variance')
+            # mean = tf.constant([-0.3, 0], name='batch_mean')
+            # variance = tf.constant([0.81, 0.0049], name='batch_variance')
             self.state = tf.nn.batch_normalization(self.state_raw, mean, variance, None, None, 1e-8)
-        else:
-            self.state = self.state_raw
+
+        if self.select_env == 'InvertedPendulum-v1':
+            mean = tf.constant([0., 0., 0., 0.], name='batch_mean')
+            variance = tf.constant([4.22701007e-03,  1.98672228e-02,   9.07489777e-01,   4.62239027e+00], name='batch_variance')
+            self.state = tf.nn.batch_normalization(self.state_raw, mean, variance, None, None, 1e-8)
+            # self.state = self.state_raw
 
         self.mu, sum_p = self.mu_net(self.state, self.theta_mu)
 
@@ -232,8 +288,17 @@ class ddpg():
         self.learning_rate_critic = tf.placeholder(tf.float32, shape= [], name='critic_learning_rate')
 
 
+        ou_theta = 0.15
+        ou_sigma = 0.2
+        # explore
+        noise_init = tf.zeros([1] + [self.action_dim])
+        noise_var = tf.Variable(noise_init)
+        self.ou_reset = noise_var.assign(noise_init)
+        noise = noise_var.assign_sub((ou_theta) * noise_var - tf.random_normal([self.action_dim], stddev=ou_sigma))
+        self.act_expl = self.mu + noise
+
         # test
-        self.q, sum_q = self.q_net(self.state, self.mu, self.theta_q)
+        self.q, sum_q = self.q_net(self.state, self.mu, self.theta_q, name='q_mu_of_s')
         # training
         # policy loss
         meanq = tf.reduce_mean(self.q)
@@ -258,18 +323,18 @@ class ddpg():
         self.term2 = tf.placeholder(tf.bool, [None, 1], name='term2')
 
         # q
-        self.q_train, sum_qq = self.q_net(self.state, self.act_train, self.theta_q)
+        self.q_train, sum_qq = self.q_net(self.state, self.act_train, self.theta_q, name= 'qs_a')
 
         # q targets
         act2, sum_p2 = self.mu_net(state_prime, theta=self.theta_mu_prime)
-        self.q2, sum_q2 = self.q_net(state_prime, act2, theta=self.theta_q_prime)
+        self.q2, sum_q2 = self.q_net(state_prime, act2, theta=self.theta_q_prime, name= 'qsprime_aprime')
         q_target = tf.stop_gradient(tf.select(self.term2, self.rew, self.rew + self.gamma * tf.reshape(self.q2, [self.batch_size,1]) ))
 
         # q loss
         td_error = self.q_train - q_target
         ms_td_error = tf.reduce_mean(tf.square(td_error))
-        wd_q = tf.add_n([ql2 * tf.nn.l2_loss(var) for var in self.theta_q])  # weight decay
-        self.q_loss = ms_td_error + wd_q
+        # wd_q = tf.add_n([ql2 * tf.nn.l2_loss(var) for var in self.theta_q])  # weight decay
+        self.q_loss = ms_td_error # + wd_q
         # q optimization
         # optim_q = tf.train.GradientDescentOptimizer(learning_rate=self.learning_rate_critic)
         optim_q = tf.train.AdamOptimizer(learning_rate=self.learning_rate_critic)
@@ -331,8 +396,7 @@ class ddpg():
                     }
 
         dict_ = feed_dict()
-        summary, _, mse_val = self.sess.run([self.merged, self.q_train_step, self.q_loss], feed_dict= dict_)
-        self.sess.run([self.mu_train_step ], feed_dict= dict_)
+        summary, _, _, mse_val = self.sess.run([self.merged, self.q_train_step, self.mu_train_step, self.q_loss], feed_dict= dict_)
 
         if self.step % 10 == 0:
             self.train_writer.add_summary(summary, self.step)
@@ -341,9 +405,10 @@ class ddpg():
             print('result after minibatch no. {} : mean squared error: {}'.format(self.step, mse_val))
             # print('batch train data states', dict_[self.x_states])
             # print('batch train data actions', dict_[self.x_action])
-            self.plot_learned_mu()
-            self.plot_replay_memory_2d_state_histogramm()
-            self.plot_q_func()
+            if self.select_env == 'MountainCarContinuous-v0':
+                self.plot_learned_mu()
+                self.plot_replay_memory_2d_state_histogramm()
+                self.plot_q_func()
 
             # print('qs: ', self.q.eval(feed_dict = {self.x_states: dict_[self.x_states], self.x_action: dict_[self.x_action]}))
 
@@ -356,6 +421,9 @@ class ddpg():
 
     def eval_q(self, state, action):
         return self.q_train.eval(feed_dict= {self.state_raw : state, self.act_train : action})
+
+    def eval_expl(self, state):
+        return self.act_expl.eval(feed_dict= {self.state_raw : state})
 
 
     def apply_limits(self,action):
