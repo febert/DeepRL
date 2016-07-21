@@ -36,13 +36,14 @@ class q_learning():
                  dropout_keep_prob = 1.0,
                  ema_decay_rate = 0.999,
                  init_weights = None,
-                 num_steps_until_train_step = None
+                 num_steps_until_train_step = None,
+                 train_frequency = 1.0
                  ):
         if num_steps_until_train_step is None:
             num_steps_until_train_step = nn_batch_size
 
         self.env = gym.make(environment)
-        self.select_env = environment
+        self.env_name = environment
 
         self.num_actions = self.env.action_space.n
         self.prob_distrib = np.zeros(self.num_actions)
@@ -55,6 +56,7 @@ class q_learning():
         # lengths of all the tested episodes
         self.test_lengths = []
         self.test_its = []
+        self.test_runs_to_average = 5
 
 
         self.plot_resolution = plot_resolution
@@ -79,6 +81,10 @@ class q_learning():
         normalization_mean = np.mean(states, axis=(0)).astype(np.float32)
         normalization_var = np.var(states, axis=(0)).astype(np.float32)
 
+        # if self.env_name == 'CartPole-v0':
+        #     normalization_mean = np.zeros_like(normalization_mean)
+        #     normalization_var = np.ones_like(normalization_var)
+
         ## exploration parameters
         # too much exploration is wrong!!!
         self.epsilon = init_epsilon  # explore probability
@@ -101,6 +107,7 @@ class q_learning():
         # simultaneous evaluation through neural network
         self.qnn = qnn.qnn(self.statedim,
                            self.num_actions,
+                           discount=self.gamma,
                            size_hidden=nn_size_hidden,
                            batch_size=nn_batch_size,
                            learning_rate=nn_learning_rate,
@@ -115,6 +122,7 @@ class q_learning():
                            init_weights=init_weights
                            )
         self.learning_rate = nn_learning_rate
+        self.train_frequency = train_frequency
 
         print('using environment', environment)
         print('qnn target', qnn_target, self.is_a_prime_external, self.qnn.is_a_prime_external)
@@ -141,7 +149,7 @@ class q_learning():
 
 
 
-    def deepq_learning(self, num_iter=1000, max_steps=5000, learning_rate=None, reset_replay_memory=False):
+    def deepq_learning(self, num_iter=1000, max_steps=5000, max_learning_steps=np.inf, learning_rate=None, reset_replay_memory=False):
         if learning_rate is None:
             learning_rate = self.learning_rate
 
@@ -154,7 +162,14 @@ class q_learning():
             self.plot_deepQ_policy(mode='deterministic')
             self.plot_deepQ_function()
 
+        prev_writeout = self.qnn.samples_count
+        prev_writeout_1 = self.qnn.samples_count
+        ref_learning_steps = self.qnn.training_steps_count
+        is_first = True
         for it in range(num_iter):
+            if (self.qnn.training_steps_count - ref_learning_steps) > max_learning_steps:
+                print('done training, I\'m tired. I started by', ref_learning_steps)
+                break
             self.total_train_episodes += 1
 
             #            episode = []
@@ -177,7 +192,7 @@ class q_learning():
                 # evaluation alone, to test a neural network
                 if not self.is_a_prime_external:
                     # Q learning
-                    self.qnn.train_batch(prev_state.reshape(1,-1), np.array(prev_action).reshape(-1), np.array(reward).reshape(-1), state.reshape(1,-1), done, learning_rate=learning_rate)
+                    self.qnn.train_batch(prev_state.reshape(1,-1), np.array(prev_action).reshape(-1), np.array(reward).reshape(-1), state.reshape(1,-1), done, learning_rate=learning_rate, train_frequency=self.train_frequency)
                 else:
                     # SARSA (not converging)
                     raise ValueError('Option not defined')
@@ -194,24 +209,29 @@ class q_learning():
                     if self.epsilon > 0.1:
                         self.epsilon -= (self.init_epsilon - self.end_epsilon)*(1./self.exploration_decrease_length)
 
-            if (it + 1) % 5 == 0:
-                print("Episode %d" % (it), "total samples", self.qnn.samples_count, "train steps", self.qnn.training_steps_count)
-                if (done): print("Length %d" % (self.episode_lengths[-1]))
+            # if (it + 1) % 5 == 0:
+            if self.qnn.training_steps_count > 0 or is_first:
+                if (self.qnn.samples_count - prev_writeout) > 1e4/self.train_frequency:
+                    prev_writeout = self.qnn.samples_count
+                    print("Episode %d" % (it), "total samples", self.qnn.samples_count, "train steps", self.qnn.training_steps_count)
+                    if (done): print("Length %d" % (self.episode_lengths[-1]))
 
-            if (it + 1) % 100 == 0:
-                print("exploration ", self.epsilon)
-                self.plot_training()
+                # if (it + 1) % 100 == 0:
+                if (self.qnn.samples_count - prev_writeout_1) > 1e5/self.train_frequency:
+                    prev_writeout_1 = self.qnn.samples_count
+                    print("exploration ", self.epsilon)
+                    self.plot_training()
 
-            if (it + 1) % 100 == 0:
-                self.test_lengths.append(self.run_test_episode(limit=1000))
-                self.test_its.append(self.total_train_episodes)
-                self.plot_testing()
+                    self.test_lengths.append(np.mean([self.run_test_episode(limit=1000) for _ in range(self.test_runs_to_average)]))
+                    self.test_its.append(self.total_train_episodes)
+                    self.plot_testing()
 
-            if (it + 1) % 100 == 0:
-                if self.statedim == 2:
-                    # print('last w', self.w)
-                    self.plot_deepQ_policy(mode='deterministic')
-                    self.plot_deepQ_function()
+                    if self.statedim == 2:
+                        # print('last w', self.w)
+                        self.plot_deepQ_policy(mode='deterministic')
+                        self.plot_deepQ_function()
+
+                is_first = False
 
         self.plot_replay_memory_2d_state_histogramm()
 
@@ -373,7 +393,7 @@ class q_learning():
     def plot_replay_memory_2d_state_histogramm(self):
         if self.statedim == 2:
             rm=np.array(self.qnn.replay_memory)
-            states, _,_,_,_ = zip(*rm)
+            states, _,_,_,_,_ = zip(*rm)
             states_np = np.array(states)
             states_np = np.squeeze(states_np)
 

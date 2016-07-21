@@ -9,6 +9,7 @@ class qnn:
     def __init__(self,
                  size_input,
                  size_output,
+                 discount=0.99,
                  size_hidden = [300,400,400],
                 #  descent_method = 'adam',
                  descent_method = 'grad',
@@ -39,15 +40,19 @@ class qnn:
         if init_weights is None:
             init_weights = 0.1
         self.init_weights = init_weights
-        print("init_weights", self.init_weights)
+        # print("init_weights", self.init_weights)
 
-        def weight_variable(shape, fan_in=True):
+        def weight_variable(shape, fan_in=True, act=None):
             """
             Create a weight variable with appropriate initialization.
             Random to break symmetries.
             """
             if fan_in:
-                std=1.0/np.sqrt(shape[0])
+                if act is None:
+                    std=1.0/np.sqrt(shape[0])
+                elif act is tf.nn.relu:
+                    print('relu!!!!')
+                    std=np.sqrt(2.0)/np.sqrt(shape[0])
             else:
                 std=self.init_weights
             print('weights std =', std)
@@ -55,12 +60,23 @@ class qnn:
             initial = tf.truncated_normal(shape, stddev=std)
             return tf.Variable(initial)
 
-        def bias_variable(shape):
+        def bias_variable(shape, fan_in_size=0, act=None):
             """
             Create a bias variable with appropriate initialization.
             Larger than zero to avoid dead ReLUs
             """
-            initial = tf.constant(0.1, shape=shape)
+            # if fan_in_size > 0:
+            #     if act is None:
+            #         std=1.0/np.sqrt(fan_in_size)
+            #     elif act is tf.nn.relu:
+            #         print('relu!!!!')
+            #         std=np.sqrt(2.0)/np.sqrt(fan_in_size)
+            # elif fan_in_size == 0:
+            #     std=0.0
+            std=0.0
+            print('bias std =', std)
+            # initial = tf.constant(0.0, shape=shape)
+            initial = tf.truncated_normal(shape, stddev=std)
             return tf.Variable(initial)
 
         def variable_summaries(var,name):
@@ -172,10 +188,11 @@ class qnn:
             with tf.name_scope(layer_name):
                 # This Variable will hold the state of the weights for the layer
                 with tf.name_scope('weights'):
-                    weights = weight_variable([input_dim, output_dim])
+                    weights = weight_variable([input_dim, output_dim],act=act)
                     variable_summaries(weights, layer_name + '/weights')
                 with tf.name_scope('biases'):
-                    biases = bias_variable([output_dim])
+                    # biases = bias_variable([output_dim])
+                    biases = bias_variable([output_dim], fan_in_size=input_dim, act=act)
                     variable_summaries(biases, layer_name + '/biases')
                 # if it is not the last layer
                 if act is not None:
@@ -204,10 +221,11 @@ class qnn:
             with tf.name_scope(layer_name):
                 # This Variable will hold the state of the weights for the layer
                 with tf.name_scope('weights'):
-                    weights = weight_variable([input_dim, output_dim])
+                    weights = weight_variable([input_dim, output_dim],act=act)
                     variable_summaries(weights, layer_name + '/weights')
                 with tf.name_scope('biases'):
-                    biases = bias_variable([output_dim])
+                    # biases = bias_variable([output_dim])
+                    biases = bias_variable([output_dim], fan_in_size=input_dim, act=act)
                     variable_summaries(biases, layer_name + '/biases')
                 # if it is not the last layer
                 if act is not None:
@@ -242,10 +260,11 @@ class qnn:
             with tf.name_scope(layer_name):
                 # This Variable will hold the state of the weights for the layer
                 with tf.name_scope('weights'):
-                    weights = weight_variable([input_dim, output_dim])
+                    weights = weight_variable([input_dim, output_dim],act=act)
                     variable_summaries(weights, layer_name + '/weights')
                 with tf.name_scope('biases'):
-                    biases = bias_variable([output_dim])
+                    # biases = bias_variable([output_dim])
+                    biases = bias_variable([output_dim], fan_in_size=input_dim, act=act)
                     variable_summaries(biases, layer_name + '/biases')
                 # prime network uses a moving average of the main network
                 ema = tf.train.ExponentialMovingAverage(decay=decay)
@@ -307,10 +326,10 @@ class qnn:
             # reward
             self.r = tf.placeholder(tf.float32, shape = [None], name='reward')
             # action from state s to state s_prime
-            self.a = tf.placeholder(tf.int64, shape = [None], name='action')
+            self.a = tf.placeholder(tf.int32, shape = [None], name='action')
             a_one_hot = tf.one_hot(self.a, size_output, 1.0, 0.0)
             if self.is_a_prime_external:
-                self.a_prime = tf.placeholder(tf.int64, shape = [None], name='action_prime')
+                self.a_prime = tf.placeholder(tf.int32, shape = [None], name='action_prime')
                 a_prime_one_hot = tf.one_hot(self.a_prime, size_output, 1.0, 0.0)
 
         # DROPOUT PROBABILITY
@@ -321,14 +340,14 @@ class qnn:
 
         # HIDDEN LAYERS
         hidden_prev = nn_dual_layer_with_decay((self.s_norm, self.s_prime_norm), size_input, size_hidden[0], 'layer'+str(1), ema_ops_list, decay=ema_decay_rate)
-        with tf.name_scope('dropout'):
-            hidden_prev = tf.nn.dropout(hidden_prev[0], self.keep_prob), tf.nn.dropout(hidden_prev[1], self.keep_prob)
+        # with tf.name_scope('dropout'):
+        #     hidden_prev = tf.nn.dropout(hidden_prev[0], self.keep_prob), tf.nn.dropout(hidden_prev[1], self.keep_prob)
         for idx in range(1, len(size_hidden) ):
             hidden = nn_dual_layer_with_decay(hidden_prev, size_hidden[idx-1], size_hidden[idx], 'layer'+str(idx+1), ema_ops_list, decay=ema_decay_rate)
-            with tf.name_scope('dropout'):
-                dropped = tf.nn.dropout(hidden[0], self.keep_prob), tf.nn.dropout(hidden[1], self.keep_prob)
-            hidden_prev = dropped
-            # no dropout for now
+            # with tf.name_scope('dropout'):
+            #     dropped = tf.nn.dropout(hidden[0], self.keep_prob), tf.nn.dropout(hidden[1], self.keep_prob)
+            # hidden_prev = dropped
+            hidden_prev = hidden
 
         # self.is_a_prime_external = tf.placeholder(tf.bool)
         # q_all contains all the q values for all the actions
@@ -344,7 +363,8 @@ class qnn:
                 # Q-learning
                 print('Q-learning configured in nn graph')
                 q_prime = tf.stop_gradient(tf.reduce_max(q_all_prime, reduction_indices=[1]))
-            q_target = 0.99*q_prime*self.is_not_end_state + self.r
+            q_target = discount*q_prime*self.is_not_end_state + self.r
+            tf.histogram_summary('q_target', q_target)
             q_a = tf.reduce_sum(tf.mul(self.q_all, a_one_hot), reduction_indices=[1])
 
         with tf.name_scope('mean_squares_error'):
@@ -366,10 +386,10 @@ class qnn:
 
         self.summary_op = tf.merge_all_summaries()
 
-        self.sess = tf.Session()
+        self.sess = tf.Session(config=tf.ConfigProto(log_device_placement=True))
 
         self.sess.run(tf.initialize_all_variables())
-        self.summary_writer = tf.train.SummaryWriter('./data/'+env_name, self.sess.graph)
+        self.summary_writer = tf.train.SummaryWriter('/tmp/tfdata/'+env_name, self.sess.graph)
 
         self.training_steps_count = 0
         self.samples_count = 0
@@ -383,7 +403,7 @@ class qnn:
 
 
     # def train_single_example(self, s, a, r, s_prime):
-    #     feed_dict = {self.s: s, self.a: a.astype(np.int64), self.r: r, self.s_prime: s_prime}
+    #     feed_dict = {self.s: s, self.a: a.astype(np.int32), self.r: r, self.s_prime: s_prime}
     #
     #     # every 10th iteration, save a summary
     #     if self.training_steps_count % 10 == 0:
@@ -420,7 +440,7 @@ class qnn:
     #         # fill list
     #         self.simple_batch_list.append((s,a,r,s_prime))
     #         # print(self.simple_batch_list)
-    #     # feed_dict = {self.s: s, self.a: a.astype(np.int64), self.r: r, self.s_prime: s_prime}
+    #     # feed_dict = {self.s: s, self.a: a.astype(np.int32), self.r: r, self.s_prime: s_prime}
     #
     #     self.training_steps_count += 1
 
@@ -428,11 +448,11 @@ class qnn:
 
 
 
-    def train_batch(self, s, a, r, s_prime, done, a_prime=None, learning_rate=None):
+    def train_batch(self, s, a, r, s_prime, done, a_prime=None, learning_rate=None, train_frequency = 1.0):
         if learning_rate is None:
-            learning_rate = self.l_r
+            learning_rate = self.learning_rate_value
 
-        if (len(self.replay_memory) >= 1e3*self.batch_size) and (self.samples_count % self.batch_size == 0 or self.do_train_every_sample):
+        if (len(self.replay_memory) >= 5e4) and (self.samples_count % (self.batch_size/train_frequency) == 0 or self.do_train_every_sample):
             # fill list
             self.replay_memory.append((s,a,r,s_prime,a_prime,done))
 
@@ -459,7 +479,7 @@ class qnn:
                 # print(feed_dict)
 
             # train and write summary
-            if self.training_steps_count % 10 == 0:
+            if self.training_steps_count % 100 == 0:
                 summary, _ = self.sess.run([self.summary_op, self.train_step], feed_dict=feed_dict)
                 self.summary_writer.add_summary(summary, self.training_steps_count)
             else:
@@ -471,7 +491,7 @@ class qnn:
             # fill list
             self.replay_memory.append((s,a,r,s_prime,a_prime,done))
             # print(self.simple_batch_list)
-        # feed_dict = {self.s: s, self.a: a.astype(np.int64), self.r: r, self.s_prime: s_prime}
+        # feed_dict = {self.s: s, self.a: a.astype(np.int32), self.r: r, self.s_prime: s_prime}
 
         self.samples_count += 1
 
