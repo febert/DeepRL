@@ -26,8 +26,6 @@ class ornstein_uhlenbeck():
         return  self.x
 
 
-
-
 if __name__ == '__main__':
 
         ou1 = ornstein_uhlenbeck(ndim= 1, theta= 0.15, sigma= .3, delta_t= 1)
