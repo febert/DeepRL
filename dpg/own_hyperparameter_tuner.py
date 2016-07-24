@@ -55,7 +55,7 @@ class hyper_parameter_tuner:
 
     def run_trial(self, value_dict):
 
-        with ddpg3.ddpg(environment='InvertedPendulum-v1',
+        with ddpg3.ddpg(environment=value_dict['env'],
                         #environment='MountainCarContinuous-v0',
                         learning_rates= value_dict['lr'],
                         noise_scale= value_dict['noise_level'],
@@ -81,9 +81,11 @@ if __name__ == '__main__':
     ql2_factor = np.linspace(start= 0, stop=0.01, num = 2)
     print('weight decay ql2:', ql2_factor)
 
-    paramdict = { 'lr': lr_list,
-                  'noise_level': noise_levels,
-                  'weight_decay': ql2_factor
+    paramdict = {
+                'env':'InvertedPendulum-v1',
+                'lr': lr_list,
+                'noise_level': noise_levels,
+                'weight_decay': ql2_factor
     }
 
     hpt = hyper_parameter_tuner(param_dict= paramdict, num_exp= 10, dataname= 'hypertest')
