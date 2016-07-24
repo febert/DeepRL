@@ -15,7 +15,7 @@ class hyper_parameter_tuner:
                  ):
 
         self.num_exp = num_exp
-        self.param_dict = paramdict#
+        self.param_dict = param_dict
         self.dataname = dataname
 
     def sampler(self):
