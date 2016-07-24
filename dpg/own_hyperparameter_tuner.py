@@ -88,6 +88,6 @@ if __name__ == '__main__':
                 'weight_decay': ql2_factor
     }
 
-    hpt = hyper_parameter_tuner(param_dict= paramdict, num_exp= 10, dataname= 'hypertest')
+    hpt = hyper_parameter_tuner(param_dict= paramdict, num_exp= 1000, dataname= 'hyper_inv_pendulum')
     hpt.run_experiments()
 

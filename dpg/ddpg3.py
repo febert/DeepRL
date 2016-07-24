@@ -40,6 +40,7 @@ class ddpg():
                  maxstep = 1e4,
                  warmup = 5e4
                  ):
+
         self.maxstep = maxstep
         self.ql2 = ql2
         # lr_actor = 5e-5
@@ -175,7 +176,7 @@ class ddpg():
             #     self.plot_learned_mu()
             #     self.plot_replay_memory_2d_state_histogramm()
             if self.select_env == 'Reacher-v1':
-                test_freq = 15
+                test_freq = 3
                 plot_freq = 1
 
             if self.select_env == 'MountainCarContinuous-v0' or 'AcrobotContinuous-v0':
@@ -549,5 +550,5 @@ class ddpg():
 
 if __name__ == '__main__':
 
-    car = ddpg(warmup= 1, maxstep= 10)
+    car = ddpg(environment= 'Reacher-v1')
     car.main()
