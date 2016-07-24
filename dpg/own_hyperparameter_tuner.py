@@ -61,7 +61,8 @@ class hyper_parameter_tuner:
                         noise_scale= value_dict['noise_level'],
                         enable_plotting= False,
                         ql2= value_dict['weight_decay'],
-                        tensorboard_logs = False) as ddpg3_instance:
+                        tensorboard_logs= False,
+                        ) as ddpg3_instance:
 
             score = ddpg3_instance.main()
 
@@ -81,8 +82,7 @@ if __name__ == '__main__':
     ql2_factor = np.linspace(start= 0, stop=0.01, num = 2)
     print('weight decay ql2:', ql2_factor)
 
-    paramdict = {
-                'env':'InvertedPendulum-v1',
+    paramdict = {'env':['InvertedPendulum-v1'],
                 'lr': lr_list,
                 'noise_level': noise_levels,
                 'weight_decay': ql2_factor

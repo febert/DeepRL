@@ -37,7 +37,8 @@ class ddpg():
                  enable_plotting = True,
                  ql2 = 0.01,
                  tensorboard_logs = True,
-                 maxstep = 1e4
+                 maxstep = 1e4,
+                 warmup = 5e4
                  ):
         self.maxstep = maxstep
         self.ql2 = ql2
@@ -64,7 +65,7 @@ class ddpg():
         self.summaries_dir = './logging/ddpg'
 
         replay_memory_size = 5e5 #number of transitions to be stored in replay buffer
-        self.warmup = 5e4
+        self.warmup = warmup
 
         self.train_lengths = []
         self.test_lengths = []
@@ -459,9 +460,10 @@ class ddpg():
             plt.show()
 
     def main(self):
-        if tf.gfile.Exists(self.summaries_dir):
-            tf.gfile.DeleteRecursively(self.summaries_dir)
-        tf.gfile.MakeDirs(self.summaries_dir)
+        if self.tensorboard_logs:
+            if tf.gfile.Exists(self.summaries_dir):
+                tf.gfile.DeleteRecursively(self.summaries_dir)
+            tf.gfile.MakeDirs(self.summaries_dir)
 
         self.initialize_training(self.sess)
         return self.start_training()
@@ -547,5 +549,5 @@ class ddpg():
 
 if __name__ == '__main__':
 
-    car = ddpg()
+    car = ddpg(warmup= 1, maxstep= 10)
     car.main()
