@@ -332,6 +332,14 @@ class qnn:
                 self.a_prime = tf.placeholder(tf.int32, shape = [None], name='action_prime')
                 a_prime_one_hot = tf.one_hot(self.a_prime, size_output, 1.0, 0.0)
 
+        # # INCREASE INPUT SIZE (redundant)
+        # with tf.name_scope('dim_increase'):
+        #     doubling_steps = 7
+        #     for _ in range(doubling_steps):
+        #         size_input *= 2
+        #         self.s_norm = tf.concat(1, [self.s_norm, self.s_norm])
+        #         self.s_prime_norm = tf.concat(1, [self.s_prime_norm, self.s_prime_norm])
+
         # DROPOUT PROBABILITY
         self.keep_prob = tf.placeholder(tf.float32)
 
