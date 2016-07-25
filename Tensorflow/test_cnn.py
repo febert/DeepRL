@@ -87,7 +87,7 @@ init = tf.initialize_all_variables()
 summary_op = tf.merge_all_summaries()
 
 
-summary_writer = tf.train.SummaryWriter('./regressiontest/cnn', sess.graph)
+summary_writer = tf.train.SummaryWriter('/tmp/cnn', sess.graph)
 
 t_elapsed = 0.
 
