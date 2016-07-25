@@ -4,6 +4,8 @@ from __future__ import print_function
 
 import ddpg3
 import numpy as np
+import sys
+import cPickle
 
 
 np.set_printoptions(threshold=np.inf)
@@ -47,11 +49,20 @@ class hyper_parameter_tuner:
             score_params_list.append((score, value_dict))
             self.savedata(self.dataname, score_params_list)
 
+            sys.stdout.flush()
+
     def savedata(self, dataname, data):
-        import cPickle
+
         output = open(dataname, 'wb')
         cPickle.dump(data, output)
         output.close()
+
+    def loaddata(self, dataname):
+        pkl_file = open(dataname, 'rb')
+        paramlist = cPickle.load(pkl_file)
+
+        scores = [paramlist[i][0] for i in paramlist]
+        print( 'scores', scores)
 
     def run_trial(self, value_dict):
 
@@ -69,6 +80,7 @@ class hyper_parameter_tuner:
         return score
 
 if __name__ == '__main__':
+
 
 
     lr_list = np.linspace(1e-5, 1e-2, num=10)
@@ -89,5 +101,7 @@ if __name__ == '__main__':
     }
 
     hpt = hyper_parameter_tuner(param_dict= paramdict, num_exp= 1000, dataname= 'hyper_inv_pendulum')
+
+
     hpt.run_experiments()
 
