@@ -6,12 +6,13 @@ np.set_printoptions(threshold=np.inf)
 
 import matplotlib.pyplot as plt
 from matplotlib import cm
-from mpl_toolkits.mplot3d import axes3d
+# from mpl_toolkits.mplot3d import axes3d
 from matplotlib.colors import LogNorm
-import time
+# import time
 import math
-import cPickle
+# import cPickle
 import gym as gym
+from PIL import Image
 
 import qnn
 
@@ -37,8 +38,12 @@ class q_learning():
                  ema_decay_rate = 0.999,
                  init_weights = None,
                  num_steps_until_train_step = None,
-                 train_frequency = 1.0
+                 train_frequency = 1.0,
+                 from_pixels = False
                  ):
+        self.from_pixels = from_pixels
+        self.repeat_action_times = 4
+
         if num_steps_until_train_step is None:
             num_steps_until_train_step = nn_batch_size
 
@@ -119,13 +124,17 @@ class q_learning():
                            normalization_mean=normalization_mean,
                            normalization_var=normalization_var,
                            env_name=environment,
-                           init_weights=init_weights
+                           init_weights=init_weights,
+                           from_pixels=self.from_pixels
                            )
         self.learning_rate = nn_learning_rate
         self.train_frequency = train_frequency
 
         print('using environment', environment)
         print('qnn target', qnn_target, self.is_a_prime_external, self.qnn.is_a_prime_external)
+
+        if self.from_pixels:
+            self.env.render()
 
 
     # epsilon-greedy but deterministic or stochastic is a choice
@@ -183,11 +192,18 @@ class q_learning():
                 if count > max_steps:
                     self.episode_lengths.append(count)
                     break
-                count += 1
 
-                state, reward, done, info = self.env.step(prev_action)
+                for _ in range(self.repeat_action_times):
+                    count += 1
+                    state, reward, done, info = self.env.step(prev_action)
+                    if done: break
                 action = self.policy(state, mode=self.policy_mode, deepQ=True)
                 #                episode.append((state, action, reward))
+                if self.from_pixels:
+                    a = np.array(Image.fromarray(self.env.render('rgb_array'), 'RGB')\
+                                .convert('L')\
+                                .resize((self.env.viewer.width//10, self.env.viewer.height//10),\
+                                        Image.BICUBIC))
 
                 # evaluation alone, to test a neural network
                 if not self.is_a_prime_external:

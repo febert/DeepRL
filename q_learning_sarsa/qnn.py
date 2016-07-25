@@ -25,7 +25,8 @@ class qnn:
                  normalization_var = None,
                  env_name = None,
                  do_train_every_sample = False,
-                 init_weights = None
+                 init_weights = None,
+                 from_pixels = False,
                  ):
         print("normaliztion mean", normalization_mean)
         print("normalization var", normalization_var)
@@ -348,14 +349,14 @@ class qnn:
 
         # HIDDEN LAYERS
         hidden_prev = nn_dual_layer_with_decay((self.s_norm, self.s_prime_norm), size_input, size_hidden[0], 'layer'+str(1), ema_ops_list, decay=ema_decay_rate)
-        # with tf.name_scope('dropout'):
-        #     hidden_prev = tf.nn.dropout(hidden_prev[0], self.keep_prob), tf.nn.dropout(hidden_prev[1], self.keep_prob)
+        with tf.name_scope('dropout'):
+            hidden_prev = tf.nn.dropout(hidden_prev[0], self.keep_prob), hidden_prev[1]
         for idx in range(1, len(size_hidden) ):
             hidden = nn_dual_layer_with_decay(hidden_prev, size_hidden[idx-1], size_hidden[idx], 'layer'+str(idx+1), ema_ops_list, decay=ema_decay_rate)
-            # with tf.name_scope('dropout'):
-            #     dropped = tf.nn.dropout(hidden[0], self.keep_prob), tf.nn.dropout(hidden[1], self.keep_prob)
-            # hidden_prev = dropped
-            hidden_prev = hidden
+            with tf.name_scope('dropout'):
+                dropped = tf.nn.dropout(hidden[0], self.keep_prob), hidden[1]
+            hidden_prev = dropped
+            # hidden_prev = hidden
 
         # self.is_a_prime_external = tf.placeholder(tf.bool)
         # q_all contains all the q values for all the actions
