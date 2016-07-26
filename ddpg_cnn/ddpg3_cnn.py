@@ -79,7 +79,7 @@ class ddpg():
         self.dim_actions = self.env.action_space.shape[0]
 
         self.env.reset()
-        self.env.render('rgb_array')
+        print(self.env.render('rgb_array').shape)
         self.dimO = [64, 64]
 
         print('observation dim', self.dimO)
@@ -115,17 +115,21 @@ class ddpg():
         return action*ascale + actionmean
 
     def getframe(self):
+        if self.select_env == 'InvertedPendulum-v1':
+            im = Image.fromarray(self.env.render('rgb_array'), 'RGB')
+            return np.asarray(im.convert('L').resize((self.dimO[0], self.dimO[1]), Image.BILINEAR))/255.
+
         return np.asarray(ImageOps.flip(self.env.render('rgb_array').convert('L').resize((self.dimO[0], self.dimO[1]), Image.BILINEAR)))/255.
 
     def run_episode(self, enable_render=False, limit=5000, test_run = True):
 
         self.env.reset()
-        # state = self.getframe()
-        # print('state size :', state.shape)
-        # print(state)
-        # print(np.min(state), np.max(state))
-        # plt.imshow(state,cmap='gray', interpolation='none')
-        # plt.show()
+        state = self.getframe()
+        print('state size :', state.shape)
+        print(state)
+        print(np.min(state), np.max(state))
+        plt.imshow(state,cmap='gray', interpolation='none')
+        plt.show()
 
         state = np.zeros((self.dimO[0], self.dimO[1], 3))
         state_prime = np.zeros((self.dimO[0], self.dimO[1], 3))
@@ -487,5 +491,5 @@ class ddpg():
 
 if __name__ == '__main__':
 
-    car = ddpg(environment= 'AcrobotContinuous-v0')
+    car = ddpg()
     car.main()

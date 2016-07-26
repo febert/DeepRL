@@ -29,7 +29,7 @@ class cnn_config:
 
         self.num_fc1 = 200
         self.num_fc2 = 200
-        
+
         # self.no_kerneles_conv1 = 1
         # self.no_kerneles_conv2 = 1
         # self.no_kerneles_conv3 = 1
