@@ -13,6 +13,9 @@ import math
 # import cPickle
 import gym as gym
 from PIL import Image
+from PIL import ImageOps
+from collections import deque
+import copy
 
 import qnn
 
@@ -39,10 +42,12 @@ class q_learning():
                  init_weights = None,
                  num_steps_until_train_step = None,
                  train_frequency = 1.0,
-                 from_pixels = False
+                 from_pixels = False,
+                 repeat_action_times = 4
                  ):
         self.from_pixels = from_pixels
-        self.repeat_action_times = 4
+        self.repeat_action_times = repeat_action_times
+        self.frame_downscaling = 10
 
         if num_steps_until_train_step is None:
             num_steps_until_train_step = nn_batch_size
@@ -103,12 +108,22 @@ class q_learning():
         # ----> Use gamma!!!!! TODO: slower decrease?
         self.gamma = gamma  # similar to 0.9
 
+        # DEPRECATED
         if qnn_target == 'q-learning':
             self.is_a_prime_external = False
         elif qnn_target == 'sarsa':
             self.is_a_prime_external = True
         else:
             throw('ValueError')
+
+        # set pixel state parameters
+        if self.from_pixels or True:
+            self.env.render()
+            self.img_height = self.env.viewer.height
+            self.img_width = self.env.viewer.width
+            self.reduced_height = self.img_height//self.frame_downscaling
+            self.reduced_width = self.img_width//self.frame_downscaling
+
         # simultaneous evaluation through neural network
         self.qnn = qnn.qnn(self.statedim,
                            self.num_actions,
@@ -125,7 +140,10 @@ class q_learning():
                            normalization_var=normalization_var,
                            env_name=environment,
                            init_weights=init_weights,
-                           from_pixels=self.from_pixels
+                           from_pixels=self.from_pixels,
+                           input_width=self.reduced_width,
+                           input_height=self.reduced_height,
+                           input_channels=self.repeat_action_times
                            )
         self.learning_rate = nn_learning_rate
         self.train_frequency = train_frequency
@@ -133,8 +151,6 @@ class q_learning():
         print('using environment', environment)
         print('qnn target', qnn_target, self.is_a_prime_external, self.qnn.is_a_prime_external)
 
-        if self.from_pixels:
-            self.env.render()
 
 
     # epsilon-greedy but deterministic or stochastic is a choice
@@ -145,7 +161,7 @@ class q_learning():
         # print(explore, features, end="")
         if mode == 'deterministic' and not explore:
             if deepQ:
-                q = self.qnn.evaluate_all_actions(np.array(state).reshape((1,-1)))
+                q = self.qnn.evaluate_all_actions(state)
                 # print(state, q)
                 return np.argmax(q.squeeze())#np.random.choice(np.argwhere(q == np.amax(q)).flatten())
             if not deepQ:
@@ -156,6 +172,17 @@ class q_learning():
             # print('explore')
             return self.env.action_space.sample()
 
+    def get_render(self):
+        return np.asarray(\
+                    ImageOps.flip(\
+                        self.env.render('rgb_array')\
+                          .convert('L')\
+                              .resize((self.reduced_width, self.reduced_height), \
+                                      Image.BILINEAR)))/255
+    def get_cnn_input_tensor_from_deque(self, pixel_state_deque):
+        return np.swapaxes(\
+                    np.swapaxes(\
+                        np.array(pixel_state_deque, ndmin=4),1,2),2,3)
 
 
     def deepq_learning(self, num_iter=1000, max_steps=5000, max_learning_steps=np.inf, learning_rate=None, reset_replay_memory=False):
@@ -183,12 +210,29 @@ class q_learning():
 
             #            episode = []
             prev_state = self.env.reset()
-            prev_action = self.policy(prev_state, mode=self.policy_mode, deepQ=True)
 
             count = 0
             done = False
-            while (not done):
+            # running list of the last pixel states
+            pixel_state = deque(maxlen=self.repeat_action_times)
+            # fill initially
+            for _ in range(self.repeat_action_times):
+                pixel_state.append(self.get_render())
+            state_tensor = self.get_cnn_input_tensor_from_deque(pixel_state)
 
+            # choose first action
+            if not self.from_pixels:
+                prev_action = self.policy(np.array(prev_state).reshape((1,-1)),
+                                          mode=self.policy_mode,
+                                          deepQ=True)
+            if self.from_pixels:
+                prev_action = self.policy(state_tensor,
+                                          mode=self.policy_mode,
+                                          deepQ=True)
+            # run episode
+            while (not done):
+                state_prev_tensor = state_tensor
+                pixel_state_prev = copy.copy(pixel_state) # shallow copy
                 if count > max_steps:
                     self.episode_lengths.append(count)
                     break
@@ -196,19 +240,41 @@ class q_learning():
                 for _ in range(self.repeat_action_times):
                     count += 1
                     state, reward, done, info = self.env.step(prev_action)
+                    if self.from_pixels:
+                        pixel_state.append(self.get_render())
                     if done: break
-                action = self.policy(state, mode=self.policy_mode, deepQ=True)
-                #                episode.append((state, action, reward))
+
+                state_tensor = self.get_cnn_input_tensor_from_deque(pixel_state)
+
+                if not self.from_pixels:
+                    action = self.policy(np.array(state).reshape((1,-1)), mode=self.policy_mode, deepQ=True)
                 if self.from_pixels:
-                    a = np.array(Image.fromarray(self.env.render('rgb_array'), 'RGB')\
-                                .convert('L')\
-                                .resize((self.env.viewer.width//10, self.env.viewer.height//10),\
-                                        Image.BICUBIC))
+                    action = self.policy(state_tensor,
+                                         mode=self.policy_mode,
+                                         deepQ=True)
+                    # action = self.policy(state, mode=self.policy_mode, deepQ=True)
+                #                episode.append((state, action, reward))
 
                 # evaluation alone, to test a neural network
                 if not self.is_a_prime_external:
                     # Q learning
-                    self.qnn.train_batch(prev_state.reshape(1,-1), np.array(prev_action).reshape(-1), np.array(reward).reshape(-1), state.reshape(1,-1), done, learning_rate=learning_rate, train_frequency=self.train_frequency)
+                    if not self.from_pixels:
+                        self.qnn.train_batch(prev_state.reshape(1,-1),
+                                             np.array(prev_action).reshape(-1),
+                                             np.array(reward).reshape(-1),
+                                             state.reshape(1,-1),
+                                             done,
+                                             learning_rate=learning_rate,
+                                             train_frequency=self.train_frequency)
+                    if self.from_pixels:
+                        self.qnn.train_batch(state_prev_tensor,
+                                             np.array(prev_action).reshape(-1),
+                                             np.array(reward).reshape(-1),
+                                             state_tensor,
+                                             done,
+                                             learning_rate=learning_rate,
+                                             train_frequency=self.train_frequency)
+                        # self.qnn.train_batch()
                 else:
                     # SARSA (not converging)
                     raise ValueError('Option not defined')
@@ -260,6 +326,12 @@ class q_learning():
         episode_length = 0.
         state = self.env.reset()
 
+        # running list of the last pixel states
+        pixel_state = deque(maxlen=self.repeat_action_times)
+        # fill initially
+        for _ in range(self.repeat_action_times):
+            pixel_state.append(self.get_render())
+
         done = False
         while (not done):
 
@@ -267,10 +339,22 @@ class q_learning():
                 self.epsilon = save_epsilon
                 return episode_length
 
-            episode_length += 1
 
-            action = self.policy(state, mode=self.policy_mode, deepQ=True)
-            state, _, done, _ = self.env.step(action)
+
+            if not self.from_pixels:
+                action = self.policy(np.array(state).reshape((1,-1)), mode=self.policy_mode, deepQ=True)
+            if self.from_pixels:
+                action = self.policy(self.get_cnn_input_tensor_from_deque(pixel_state),
+                                     mode=self.policy_mode,
+                                     deepQ=True)
+
+            for _ in range(self.repeat_action_times):
+                episode_length += 1
+                state, _, done, _ = self.env.step(action)
+                if self.from_pixels:
+                    pixel_state.append(self.get_render())
+                if done: break
+
             if enable_render: self.env.render()
             # if count > self.max_episode_length: break;
 
@@ -282,6 +366,8 @@ class q_learning():
 
 
     def plot_deepQ_function(self):
+        if self.from_pixels:
+            print("plot test. May burn!!")
 
         obs_low = self.env.observation_space.low
         obs_high = self.env.observation_space.high
@@ -294,7 +380,10 @@ class q_learning():
         # this fits with the raw-wise change of X in np.meshgrid
         for state2 in v_range:
             for state1 in x_range:
-                states.append((state1, state2))
+                if not self.from_pixels:
+                    states.append((state1, state2))
+                if self.from_pixels:
+                    states.append(self.get_approx_pixel_state_from_state((state1,state2)).squeeze())
 
         states = np.array(states)
 
@@ -342,7 +431,23 @@ class q_learning():
         # ax.set_zlabel("negative value")
         plt.show()
 
+    def get_approx_pixel_state_from_state(self, state):
+        """
+        state should be a 1-D array
+        """
+        np_state = np.array(state)
+        self.env.reset()
+        self.env.state = np_state
+
+        pixel_state = []
+        for _ in range(self.repeat_action_times):
+            state, reward, done, info = self.env.step(1)
+            pixel_state.append(self.get_render())
+        return self.get_cnn_input_tensor_from_deque(pixel_state)
+
     def plot_deepQ_policy(self, mode='deterministic'):
+        if self.from_pixels:
+            print("plot experiment. Watch out!")
         resolution = self.plot_resolution
 
         # backup of value
@@ -361,7 +466,10 @@ class q_learning():
         for i, x in enumerate(x_range):
             for j, v in enumerate(v_range):
                 # print(np.argmax(self.get_features((x,v)).dot(self.theta)), end="")
-                greedy_policy[i, j] = self.policy((x, v), mode, deepQ=True)
+                if not self.from_pixels:
+                    greedy_policy[i, j] = self.policy(np.array((x, v)).reshape((1,-1)), mode, deepQ=True)
+                if self.from_pixels:
+                    greedy_policy[i, j] = self.policy(self.get_approx_pixel_state_from_state((x,v)), mode, deepQ=True)
         print("")
 
         # plot policy
@@ -407,6 +515,9 @@ class q_learning():
             plt.show()
 
     def plot_replay_memory_2d_state_histogramm(self):
+        if self.from_pixels:
+            print("plot not available. Move on.")
+            return
         if self.statedim == 2:
             rm=np.array(self.qnn.replay_memory)
             states, _,_,_,_,_ = zip(*rm)

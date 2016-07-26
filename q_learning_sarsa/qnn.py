@@ -1,4 +1,5 @@
 from __future__ import print_function
+from __future__ import division
 
 import tensorflow as tf
 import numpy as np
@@ -27,6 +28,9 @@ class qnn:
                  do_train_every_sample = False,
                  init_weights = None,
                  from_pixels = False,
+                 input_width = None,
+                 input_height = None,
+                 input_channels = None,
                  ):
         print("normaliztion mean", normalization_mean)
         print("normalization var", normalization_var)
@@ -43,17 +47,23 @@ class qnn:
         self.init_weights = init_weights
         # print("init_weights", self.init_weights)
 
-        def weight_variable(shape, fan_in=True, act=None):
+        def weight_variable(shape, fan_in=True, act=None, conv=False):
             """
             Create a weight variable with appropriate initialization.
             Random to break symmetries.
             """
             if fan_in:
+                if not conv:
+                    dim=shape[0]
+                else:
+                    dim=shape[0]*shape[1]*shape[2]
                 if act is None:
-                    std=1.0/np.sqrt(shape[0])
+                    pass
+                    std=1.0/np.sqrt(dim)
                 elif act is tf.nn.relu:
                     print('relu!!!!')
-                    std=np.sqrt(2.0)/np.sqrt(shape[0])
+                    print(dim)
+                    std=np.sqrt(2.0)/np.sqrt(dim)
             else:
                 std=self.init_weights
             print('weights std =', std)
@@ -265,7 +275,7 @@ class qnn:
                     variable_summaries(weights, layer_name + '/weights')
                 with tf.name_scope('biases'):
                     # biases = bias_variable([output_dim])
-                    biases = bias_variable([output_dim], fan_in_size=input_dim, act=act)
+                    biases = bias_variable([output_dim])
                     variable_summaries(biases, layer_name + '/biases')
                 # prime network uses a moving average of the main network
                 ema = tf.train.ExponentialMovingAverage(decay=decay)
@@ -291,55 +301,48 @@ class qnn:
                         tf.histogram_summary(layer_name + '/activations_s_prime', activations_s_prime)
                     return (activations_s, activations_s_prime)
 
+        def nn_conv_dual_layer_with_decay(input_tensor_list, weights_shape, strides, layer_name, ema_ops_list, act=tf.nn.relu, decay=0.999):
+            """Create a layer with two different inputs and two different outputs
+               calculated with the same weights. Thought for Q_learning training.
 
-        # NORMALIZE INPUT
-        with tf.name_scope('input'):
-            mean = tf.constant(normalization_mean, name='batch_mean')
-            variance = tf.constant(normalization_var, name='batch_variance')
-            # mean = tf.constant([0., 0.], name='batch_mean')
-            # variance = tf.constant([1.0, 1.0], name='batch_variance')
-            # need to be class variables to be able to make a feed_dict from other class functions
-            # state s and next state s_prime
-            self.s = tf.placeholder(tf.float32, shape = [None,size_input], name='s-input')
-            # mean, variance = tf.nn.moments(self.s, [0])
-            # self.s_norm = tf.nn.batch_normalization(self.s, mean, variance, None, None, 1e-3)
-            self.s_norm = tf.nn.batch_normalization(self.s, mean, variance, None, None, 1e-8)
-
-            self.s_prime = tf.placeholder(tf.float32, shape = [None,size_input], name='s_prime-input')
-            # mean, variance = tf.nn.moments(self.s_prime, [0])
-            # self.s_prime_norm = tf.nn.batch_normalization(self.s_prime, mean, variance, None, None, 1e-3)
-            self.s_prime_norm = tf.nn.batch_normalization(self.s_prime, mean, variance, None, None, 1e-8)
-
-            # self.mean = tf.Variable(tf.constant(0.0, shape=[size_input]), trainable=False)
-            # variable_summaries(self.mean, layer_name + '/batch_mean')
-            # self.variance = tf.Variabl(tf.constant(1.0, shape=[size_input]), trainable=False)
-            # variable_summaries(self.variance, layer_name + '/batch_variance')
-
-            # self.s = tf.placeholder(tf.float32, shape = [None,size_input], name='s-input')
-            # self.s_norm, _ = batch_norm(self.s, size_input, 'batch_norm')
-            # self.s_prime = tf.placeholder(tf.float32, shape = [None,size_input], name='s_prime-input')
-            # self.s_prime_norm, _ = batch_norm(self.s_prime, size_input, 'batch_norm_prime')
-
-            # self.s = tf.placeholder(tf.float32, shape = [None,size_input], name='s-input')
-            # self.s_prime = tf.placeholder(tf.float32, shape = [None,size_input], name='s_prime-input')
-            # self.s_norm, self.s_prime_norm = dual_batch_norm((self.s, self.s_prime), size_input, 'batch_norm')
-
-            # reward
-            self.r = tf.placeholder(tf.float32, shape = [None], name='reward')
-            # action from state s to state s_prime
-            self.a = tf.placeholder(tf.int32, shape = [None], name='action')
-            a_one_hot = tf.one_hot(self.a, size_output, 1.0, 0.0)
-            if self.is_a_prime_external:
-                self.a_prime = tf.placeholder(tf.int32, shape = [None], name='action_prime')
-                a_prime_one_hot = tf.one_hot(self.a_prime, size_output, 1.0, 0.0)
-
-        # # INCREASE INPUT SIZE (redundant)
-        # with tf.name_scope('dim_increase'):
-        #     doubling_steps = 7
-        #     for _ in range(doubling_steps):
-        #         size_input *= 2
-        #         self.s_norm = tf.concat(1, [self.s_norm, self.s_norm])
-        #         self.s_prime_norm = tf.concat(1, [self.s_prime_norm, self.s_prime_norm])
+            It does a matrix multiply, bias add, and then uses relu to nonlinearize.
+            It also sets up name scoping so that the resultant graph is easy to read,
+            and adds a number of summary ops.
+            """
+            # Adding a name scope ensures logical grouping of the layers in the graph.
+            with tf.name_scope(layer_name):
+                # This Variable will hold the state of the weights for the layer
+                with tf.name_scope('weights'):
+                    weights = weight_variable(weights_shape,act=act,conv=True)
+                    variable_summaries(weights, layer_name + '/weights')
+                with tf.name_scope('biases'):
+                    print(weights_shape)
+                    # biases = bias_variable([output_dim])
+                    biases = bias_variable([weights_shape[-1]])
+                    variable_summaries(biases, layer_name + '/biases')
+                # prime network uses a moving average of the main network
+                ema = tf.train.ExponentialMovingAverage(decay=decay)
+                ema_ops_list.append(ema.apply([weights,biases]))
+                # if it is not the last layer
+                if act is not None:
+                    with tf.name_scope('Wx_conv_plus_b'):
+                        preactivate_s = tf.nn.conv2d(input_tensor_list[0], weights, strides=strides, padding='SAME') + biases
+                        tf.histogram_summary(layer_name + '/pre_activations_s', preactivate_s)
+                        preactivate_s_prime = tf.nn.conv2d(input_tensor_list[1], ema.average(weights), strides=strides, padding='SAME') + ema.average(biases)
+                        tf.histogram_summary(layer_name + '/pre_activations_s_prime', preactivate_s_prime)
+                    activations_s = act(preactivate_s, 'activation_s')
+                    tf.histogram_summary(layer_name + '/activations_s', activations_s)
+                    activations_s_prime = act(preactivate_s_prime, 'activation_s_prime')
+                    tf.histogram_summary(layer_name + '/activations_s_prime', activations_s_prime)
+                    return (activations_s, activations_s_prime)
+                # if it is the last layer
+                else:
+                    with tf.name_scope('Wx_conv_plus_b'):
+                        activations_s = tf.nn.conv2d(input_tensor_list[0], weights, strides=strides, padding='SAME') + biases
+                        tf.histogram_summary(layer_name + '/activations_s', activations_s)
+                        activations_s_prime = tf.nn.conv2d(input_tensor_list[1], ema.average(weights), strides=strides, padding='SAME') + ema.average(biases)
+                        tf.histogram_summary(layer_name + '/activations_s_prime', activations_s_prime)
+                    return (activations_s, activations_s_prime)
 
         # DROPOUT PROBABILITY
         self.keep_prob = tf.placeholder(tf.float32)
@@ -347,16 +350,97 @@ class qnn:
         # EXPONENTIAL MOVING AVERAGE FOR WEIGHTS
         ema_ops_list = []
 
-        # HIDDEN LAYERS
-        hidden_prev = nn_dual_layer_with_decay((self.s_norm, self.s_prime_norm), size_input, size_hidden[0], 'layer'+str(1), ema_ops_list, decay=ema_decay_rate)
-        with tf.name_scope('dropout'):
-            hidden_prev = tf.nn.dropout(hidden_prev[0], self.keep_prob), hidden_prev[1]
-        for idx in range(1, len(size_hidden) ):
-            hidden = nn_dual_layer_with_decay(hidden_prev, size_hidden[idx-1], size_hidden[idx], 'layer'+str(idx+1), ema_ops_list, decay=ema_decay_rate)
+        # NORMALIZE INPUT
+        if not from_pixels:
+            with tf.name_scope('input'):
+                mean = tf.constant(normalization_mean, name='batch_mean')
+                variance = tf.constant(normalization_var, name='batch_variance')
+                # mean = tf.constant([0., 0.], name='batch_mean')
+                # variance = tf.constant([1.0, 1.0], name='batch_variance')
+                # need to be class variables to be able to make a feed_dict from other class functions
+                # state s and next state s_prime
+                self.s = tf.placeholder(tf.float32, shape = [None,size_input], name='s-input')
+                # mean, variance = tf.nn.moments(self.s, [0])
+                # self.s_norm = tf.nn.batch_normalization(self.s, mean, variance, None, None, 1e-3)
+                self.s_norm = tf.nn.batch_normalization(self.s, mean, variance, None, None, 1e-8)
+
+                self.s_prime = tf.placeholder(tf.float32, shape = [None,size_input], name='s_prime-input')
+                # mean, variance = tf.nn.moments(self.s_prime, [0])
+                # self.s_prime_norm = tf.nn.batch_normalization(self.s_prime, mean, variance, None, None, 1e-3)
+                self.s_prime_norm = tf.nn.batch_normalization(self.s_prime, mean, variance, None, None, 1e-8)
+
+                # self.mean = tf.Variable(tf.constant(0.0, shape=[size_input]), trainable=False)
+                # variable_summaries(self.mean, layer_name + '/batch_mean')
+                # self.variance = tf.Variabl(tf.constant(1.0, shape=[size_input]), trainable=False)
+                # variable_summaries(self.variance, layer_name + '/batch_variance')
+
+                # self.s = tf.placeholder(tf.float32, shape = [None,size_input], name='s-input')
+                # self.s_norm, _ = batch_norm(self.s, size_input, 'batch_norm')
+                # self.s_prime = tf.placeholder(tf.float32, shape = [None,size_input], name='s_prime-input')
+                # self.s_prime_norm, _ = batch_norm(self.s_prime, size_input, 'batch_norm_prime')
+
+                # self.s = tf.placeholder(tf.float32, shape = [None,size_input], name='s-input')
+                # self.s_prime = tf.placeholder(tf.float32, shape = [None,size_input], name='s_prime-input')
+                # self.s_norm, self.s_prime_norm = dual_batch_norm((self.s, self.s_prime), size_input, 'batch_norm')
+
+                # reward
+                self.r = tf.placeholder(tf.float32, shape = [None], name='reward')
+                # action from state s to state s_prime
+                self.a = tf.placeholder(tf.int32, shape = [None], name='action')
+                a_one_hot = tf.one_hot(self.a, size_output, 1.0, 0.0)
+                if self.is_a_prime_external:
+                    self.a_prime = tf.placeholder(tf.int32, shape = [None], name='action_prime')
+                    a_prime_one_hot = tf.one_hot(self.a_prime, size_output, 1.0, 0.0)
+
+                # # INCREASE INPUT SIZE (redundant)
+                # with tf.name_scope('dim_increase'):
+                #     doubling_steps = 7
+                #     for _ in range(doubling_steps):
+                #         size_input *= 2
+                #         self.s_norm = tf.concat(1, [self.s_norm, self.s_norm])
+                #         self.s_prime_norm = tf.concat(1, [self.s_prime_norm, self.s_prime_norm])
+
+        if from_pixels:
+            with tf.name_scope('input'):
+                self.s = tf.placeholder(tf.float32, shape = [None,input_height,input_width,input_channels], name='s-input')
+                self.s_prime = tf.placeholder(tf.float32, shape = [None,input_height,input_width,input_channels], name='s_prime-input')
+
+                # reward
+                self.r = tf.placeholder(tf.float32, shape = [None], name='reward')
+                # action from state s to state s_prime
+                self.a = tf.placeholder(tf.int32, shape = [None], name='action')
+                a_one_hot = tf.one_hot(self.a, size_output, 1.0, 0.0)
+                if self.is_a_prime_external:
+                    self.a_prime = tf.placeholder(tf.int32, shape = [None], name='action_prime')
+                    a_prime_one_hot = tf.one_hot(self.a_prime, size_output, 1.0, 0.0)
+
+        if not from_pixels:
+            # HIDDEN LAYERS
+            hidden_prev = nn_dual_layer_with_decay((self.s_norm, self.s_prime_norm), size_input, size_hidden[0], 'layer'+str(1), ema_ops_list, decay=ema_decay_rate)
             with tf.name_scope('dropout'):
-                dropped = tf.nn.dropout(hidden[0], self.keep_prob), hidden[1]
-            hidden_prev = dropped
-            # hidden_prev = hidden
+                hidden_prev = tf.nn.dropout(hidden_prev[0], self.keep_prob), hidden_prev[1]
+            for idx in range(1, len(size_hidden) ):
+                hidden = nn_dual_layer_with_decay(hidden_prev, size_hidden[idx-1], size_hidden[idx], 'layer'+str(idx+1), ema_ops_list, decay=ema_decay_rate)
+                with tf.name_scope('dropout'):
+                    dropped = tf.nn.dropout(hidden[0], self.keep_prob), hidden[1]
+                hidden_prev = dropped
+
+            last_hidden_size = size_hidden[-1]
+                # hidden_prev = hidden
+        if from_pixels:
+            # APPLY CONVOLUTIONAL LAYERS
+            hidden = nn_conv_dual_layer_with_decay((self.s, self.s_prime), [8,8,input_channels,32], [1,4,4,1], 'conv_layer'+str(1), ema_ops_list, act=tf.nn.relu, decay=ema_decay_rate)
+            hidden = nn_conv_dual_layer_with_decay(hidden, [4,4,32,64], [1,2,2,1], 'conv_layer'+str(2), ema_ops_list, act=tf.nn.relu, decay=ema_decay_rate)
+            hidden = nn_conv_dual_layer_with_decay(hidden, [3,3,64,64], [1,1,1,1], 'conv_layer'+str(3), ema_ops_list, act=tf.nn.relu, decay=ema_decay_rate)
+            # last_conv_hidden_shape = tf.shape(hidden[0])
+            # print(last_conv_hidden_shape)
+            # last_conv_layer_output_size = last_conv_hidden_shape[1]*last_conv_hidden_shape[2]*last_conv_hidden_shape[3]
+            last_conv_layer_output_size = np.int(np.ceil(np.ceil(input_width/4)/2) * np.ceil(np.ceil(input_height/4)/2) * 64)
+            print(last_conv_layer_output_size)
+            hidden_flat = tf.reshape(hidden[0], [-1, last_conv_layer_output_size]), tf.reshape(hidden[1], [-1, last_conv_layer_output_size])
+            hidden_prev = nn_dual_layer_with_decay(hidden_flat, last_conv_layer_output_size, 512, 'fc_layer'+str(1), ema_ops_list, decay=ema_decay_rate)
+
+            last_hidden_size=512
 
         # self.is_a_prime_external = tf.placeholder(tf.bool)
         # q_all contains all the q values for all the actions
@@ -364,7 +448,7 @@ class qnn:
         # OUTPUT LAYERS
         with tf.name_scope('output'):
             self.is_not_end_state = tf.placeholder(tf.float32, shape=[None], name='is_end_state_prime')
-            self.q_all, q_all_prime = nn_dual_layer_with_decay(hidden_prev, size_hidden[-1], size_output, 'layer'+str(len(size_hidden)+1), ema_ops_list, act=None, decay=ema_decay_rate)
+            self.q_all, q_all_prime = nn_dual_layer_with_decay(hidden_prev, last_hidden_size, size_output, 'output_layer', ema_ops_list, act=None, decay=ema_decay_rate)
             if self.is_a_prime_external:
                 # SARSA
                 q_prime = tf.reduce_sum(tf.mul(q_all_prime, a_prime_one_hot), reduction_indices=[1])
@@ -461,7 +545,7 @@ class qnn:
         if learning_rate is None:
             learning_rate = self.learning_rate_value
 
-        if (len(self.replay_memory) >= 5e4) and (self.samples_count % (self.batch_size/train_frequency) == 0 or self.do_train_every_sample):
+        if (len(self.replay_memory) >= 1e4) and (self.samples_count % (self.batch_size/train_frequency) == 0 or self.do_train_every_sample):
             # fill list
             self.replay_memory.append((s,a,r,s_prime,a_prime,done))
 
