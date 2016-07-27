@@ -19,13 +19,15 @@ def makeFilteredEnv(env):
             self.__dict__.update(env.__dict__)  # transfer properties
 
             # Observation space
-            if np.any(obsp.high < 1e10):
+            if not np.any(obsp.high > 1e10):
+                print('all observation dims finite')
                 h = obsp.high
                 l = obsp.low
                 sc = h - l
                 self.o_c = (h + l) / 2.
                 self.o_sc = sc / 2.
             else:
+                print('at least one observation dim unbounded')
                 self.o_c = np.zeros_like(obsp.high)
                 self.o_sc = np.ones_like(obsp.high)
 

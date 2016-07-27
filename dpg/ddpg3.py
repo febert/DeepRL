@@ -217,7 +217,7 @@ class ddpg():
         v = 1 / np.sqrt(fanin)  # * np.sqrt(2.)
 
         # tf.random_uniform(shape, minval=-v, maxval=v)
-        return tf.truncated_normal(shape, v)
+        return tf.truncated_normal(shape, mean=0, stddev= v)
 
     def create_theta_p(self,dimO, dimA):
         with tf.variable_scope("theta_p"):
@@ -297,11 +297,14 @@ class ddpg():
             # self.state = self.state_raw
 
         if self.select_env == 'Reacher-v1':
-            mean = tf.constant([-0.005007  , -0.21291223, -0.00599161, -0.00261705,  0.13582967,
-                    -0.02070659,  0.16570283, -0.00088109, -0.13647044,  0.02026401,  0.        ])
-            variance = tf.constant([  4.98794347e-01,   5.26965082e-01,   5.01144707e-01, 4.27696466e-01,
-                          5.27200673e-27,   2.31298216e-27, 1.22266579e+02,   5.15871811e+01,   8.68974719e-03,
-                         8.72577634e-03,   0.00000000e+00])
+            # mean = tf.constant([-0.005007  , -0.21291223, -0.00599161, -0.00261705,  0.13582967,
+            #         -0.02070659,  0.16570283, -0.00088109, -0.13647044,  0.02026401,  0.        ])
+            # variance = tf.constant([  4.98794347e-01,   5.26965082e-01,   5.01144707e-01, 4.27696466e-01,
+            #               5.27200673e-27,   2.31298216e-27, 1.22266579e+02,   5.15871811e+01,   8.68974719e-03,
+            #              8.72577634e-03,   0.00000000e+00])
+
+            mean = tf.constant([0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.])
+            variance = tf.constant([1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1.])
 
         if self.select_env == 'AcrobotContinuous-v0':
             mean = tf.constant([-0.00020907, -0.00273588,  0.00071914, -0.01408309], name='batch_mean')
@@ -550,5 +553,5 @@ class ddpg():
 
 if __name__ == '__main__':
 
-    car = ddpg(environment= 'Reacher-v1')
+    car = ddpg(environment= 'MountainCarContinuous-v0')
     car.main()

@@ -27,20 +27,24 @@ from PIL import Image
 from PIL import ImageOps
 
 import cProfile
+import os
+os.environ["TF_MIN_GPU_MULTIPROCESSOR_COUNT"] = "3"
+
 
 class ddpg():
 
     def __init__(self,
                  learning_rates= (5e-5, 5e-4),
                  # environment = 'MountainCarContinuous-v0',
+                 environment='AcrobotContinuous-v0',
                  # environment = 'Reacher-v1',
-                 environment = 'InvertedPendulum-v1',
+                 #environment = 'InvertedPendulum-v1',
                  noise_scale = 1,
                  enable_plotting = True,
                  ql2 = 0.01,
                  tensorboard_logs = True,
-                 maxstep = 1e5,
-                 warmup = 10 #5e4
+                 maxstep = 1e4,
+                 warmup = 1000 #1e4
                  ):
 
         self.maxstep = maxstep
@@ -79,7 +83,7 @@ class ddpg():
         self.dim_actions = self.env.action_space.shape[0]
 
         self.env.reset()
-        self.env.render('rgb_array')
+        # print(self.env.render('rgb_array').shape)
         self.dimO = [64, 64]
 
         print('observation dim', self.dimO)
@@ -101,10 +105,14 @@ class ddpg():
         return self
 
     def __del__(self):
+        self.train_writer.close()
+        tf.InteractiveSession.close(self.sess)
+        tf.reset_default_graph()
         print( "deling", self)
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         print('closing the interactive session')
+        self.train_writer.close()
         tf.InteractiveSession.close(self.sess)
         tf.reset_default_graph()
 
@@ -115,7 +123,13 @@ class ddpg():
         return action*ascale + actionmean
 
     def getframe(self):
-        return np.asarray(ImageOps.flip(self.env.render('rgb_array').convert('L').resize((self.dimO[0], self.dimO[1]), Image.BILINEAR)))/255.
+        if self.select_env == 'InvertedPendulum-v1':  # for mujoco envs:
+            numpy_im = self.env.render('rgb_array')  #this gives uint8 numpy array
+            im = Image.fromarray(numpy_im, 'RGB')
+            return np.asarray(im.convert('L').resize((self.dimO[0], self.dimO[1])), dtype= np.uint8)
+
+        im = self.env.render('rgb_array')  # this gives uint8 numpy array
+        return np.asarray(ImageOps.flip(im.convert('L').resize((self.dimO[0], self.dimO[1]))))
 
     def run_episode(self, enable_render=False, limit=5000, test_run = True):
 
@@ -127,7 +141,7 @@ class ddpg():
         # plt.imshow(state,cmap='gray', interpolation='none')
         # plt.show()
 
-        state = np.zeros((self.dimO[0], self.dimO[1], 3))
+        state = np.zeros((self.dimO[0], self.dimO[1], 3), dtype= np.uint8)
         state_prime = np.zeros((self.dimO[0], self.dimO[1], 3))
         for t in range(3):
             self.env.step(self.env.action_space.sample())
@@ -157,13 +171,11 @@ class ddpg():
             action = self.apply_limits(action)
             action = action.squeeze()
 
-            t_1 = time.clock()
-            asdf = []
+            # t_1 = time.clock()
             for t in range(3):
                 _ , reward, done, _ = self.env.step(action)
-                # state_prime[...,t] = self.getframe()
-                asdf.append(self.getframe())
-            print('time to retrieve 3 pictures:', time.clock() - t_1)
+                state_prime[...,t] = self.getframe()
+            # print('time to retrieve 3 pictures:', time.clock() - t_1)
 
             accum_reward += reward
 
@@ -172,9 +184,10 @@ class ddpg():
                 self.samples_count += 1
 
                 if (len(self.replay_memory) > self.warmup) and (self.samples_count % (self.batch_size/2) == 0):
-                    t_2 = time.clock()
-                    cProfile.runctx('self.train_networks()',globals(),locals())
-                    print('time of sgd step:', time.clock() - t_2)
+                    # t_2 = time.clock()
+                    # cProfile.runctx('self.train_networks()',globals(),locals())
+                    self.train_networks()
+                    # print('time of sgd step:', time.clock() - t_2)
 
 
             state = state_prime
@@ -218,7 +231,7 @@ class ddpg():
 
             if (it+1) % test_freq == 0:
                 # perform a test run with the target policy:
-                self.test_lengths.append(self.run_episode(test_run= True, enable_render=False))
+                self.test_lengths.append(self.run_episode(test_run= True, enable_render=False, limit= 1000))
 
             if (it+1) % plot_freq == 0:
                 self.plot_episode_lengths(self.train_lengths)
@@ -244,7 +257,9 @@ class ddpg():
         self.theta_mu_prime, update_mu_averages = exponential_moving_averages(self.theta_mu, 0.001)
         self.theta_q_prime, update_q_averages = exponential_moving_averages(self.theta_q, 0.001)
 
-        self.obs = tf.placeholder(tf.float32, [None, self.dimO[0], self.dimO[1], 3], name='x-states')
+        self.obs_raw = tf.placeholder(tf.uint8, [None, self.dimO[0], self.dimO[1], 3], name='x-states')
+
+        self.obs = tf.cast(self.obs_raw,tf.float32)/255.
 
         self.mu, sum_p = mu_net(self.obs, self.theta_mu, cnn_conf)
 
@@ -269,7 +284,10 @@ class ddpg():
         # q optimization
         self.act_train = tf.placeholder(tf.float32, [None, self.dim_actions], name='actions')
         self.rew = tf.placeholder(tf.float32, [None, 1], name='rewards')
-        self.obs2 = tf.placeholder(tf.float32, [None, self.dimO[0], self.dimO[1], 3], name='states_prime')
+
+
+        self.obs2_raw = tf.placeholder(tf.uint8, [None, self.dimO[0], self.dimO[1], 3], name='states_prime')
+        obs2 = tf.cast(self.obs2_raw, tf.float32) / 255.
 
         self.term2 = tf.placeholder(tf.bool, [None, 1], name='term2')
 
@@ -277,8 +295,8 @@ class ddpg():
         self.q_train, sum_qq = q_net(self.obs, self.act_train, self.theta_q,cnn_conf, name='qs_a')
 
         # q targets
-        act2, sum_p2 = mu_net(self.obs2, self.theta_mu_prime, cnn_conf,name='mu_of_sprime')
-        self.q2, sum_q2 = q_net(self.obs2, act2, self.theta_q_prime, cnn_conf, name= 'qsprime_aprime')
+        act2, sum_p2 = mu_net(obs2, self.theta_mu_prime, cnn_conf,name='mu_of_sprime')
+        self.q2, sum_q2 = q_net(obs2, act2, self.theta_q_prime, cnn_conf, name= 'qsprime_aprime')
         q_target = tf.stop_gradient(tf.select(self.term2, self.rew, self.rew + self.gamma * tf.reshape(self.q2, [self.batch_size,1]) ))
 
         # q loss
@@ -311,6 +329,7 @@ class ddpg():
 
         # Merge all the summaries and write them out to /tmp/mnist_logs (by default)
         self.merged = tf.merge_all_summaries()
+
         self.train_writer = tf.train.SummaryWriter(self.summaries_dir, sess.graph)
         tf.initialize_all_variables().run()
 
@@ -335,10 +354,10 @@ class ddpg():
 
             states, action, reward, states_prime, term2 = self.get_train_batch()
 
-            return {self.obs: states.squeeze().reshape(self.batch_size, self.dimO[0], self.dimO[1],3),
+            return {self.obs_raw: states.squeeze().reshape(self.batch_size, self.dimO[0], self.dimO[1],3),
                     self.act_train: action.squeeze().reshape(self.batch_size, self.dim_actions),
                     self.rew: reward.squeeze().reshape(self.batch_size,1),
-                    self.obs2: states_prime.squeeze().reshape(self.batch_size, self.dimO[0], self.dimO[1],3),
+                    self.obs2_raw: states_prime.squeeze().reshape(self.batch_size, self.dimO[0], self.dimO[1],3),
                     self.term2: term2.squeeze().reshape(self.batch_size,1),
                     self.learning_rate_actor: self.lr_actor,
                     self.learning_rate_critic: self.lr_critic,
@@ -347,25 +366,25 @@ class ddpg():
         dict_ = feed_dict()
 
 
-        t = time.clock()
+
         if self.tensorboard_logs:
-            summary, _, _, mse_val = self.sess.run([self.merged, self.q_train_step, self.mu_train_step, self.q_loss], feed_dict= dict_)
+            print('merged summary', self.merged)
+            summary, mse_val = self.sess.run([self.merged, self.q_loss ], feed_dict=dict_)
+            # summary, _, _, mse_val = self.sess.run([self.merged, self.q_train_step, self.mu_train_step, self.q_loss], feed_dict= dict_)
             if self.step % 10 == 0:
                 self.train_writer.add_summary(summary, self.step)
         else:
             _, _, mse_val = self.sess.run([self.q_train_step, self.mu_train_step, self.q_loss], feed_dict= dict_)
 
-        print('sgd step only:', time.clock() - t)
 
-
-        if self.step % 1000 == 0:
+        if self.step % 100 == 0:
             print('result after minibatch no. {} : mean squared error: {}'.format(self.step, mse_val))
             # print('batch train data states', dict_[self.x_states])
             # print('batch train data actions', dict_[self.x_action])
-            if self.select_env == 'MountainCarContinuous-v0':
-                self.plot_learned_mu()
-                self.plot_replay_memory_2d_state_histogramm()
-                self.plot_q_func()
+            # if self.select_env == 'MountainCarContinuous-v0':
+            #     self.plot_learned_mu()
+            #     self.plot_replay_memory_2d_state_histogramm()
+            #     self.plot_q_func()
 
             # print('qs: ', self.q.eval(feed_dict = {self.x_states: dict_[self.x_states], self.x_action: dict_[self.x_action]}))
 
@@ -487,5 +506,5 @@ class ddpg():
 
 if __name__ == '__main__':
 
-    car = ddpg(environment= 'AcrobotContinuous-v0')
+    car = ddpg()
     car.main()
