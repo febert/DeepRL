@@ -9,6 +9,16 @@ def fanin_init(shape, fanin=None):
     fanin = fanin or shape[0]
     v = 1 / np.sqrt(fanin)
     return tf.random_uniform(shape, minval=-v, maxval=v)
+#
+# def fanin_init(shape, fanin=None):
+#         if fanin != None:
+#             return tf.constant(0.,shape= shape)
+#
+#         fanin = fanin or shape[0]
+#         v = 1 / np.sqrt(fanin)
+#
+#         # tf.random_uniform(shape, minval=-v, maxval=v)
+#         return tf.truncated_normal(shape, v)
 
 
 def theta_hidden(dimO, l1, l2):

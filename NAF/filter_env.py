@@ -29,6 +29,10 @@ def makeFilteredEnv(env):
                 self.o_c = np.zeros_like(obsp.high)
                 self.o_sc = np.ones_like(obsp.high)
 
+            if self.spec.id == "MountainCarContinuous-v0":
+                self.o_c = [ -5.16865671e-01 ,  1.22739366e-05]
+                self.o_sc = np.sqrt([ 0.1141372,   0.00058848])
+
             # Action space
             h = acsp.high
             l = acsp.low

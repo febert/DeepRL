@@ -47,7 +47,7 @@ class NAF():
         self.summaries_dir = './logging/ddpg'
 
         replay_memory_size = 5e5 #number of transitions to be stored in replay buffer
-        self.warmup = 5e4
+        self.warmup = 0#5e4
 
         self.train_lengths = []
         self.test_lengths = []
@@ -86,10 +86,9 @@ class NAF():
         theta_l = naf_net.theta_fc(neurons_layer2, int(self.action_dim*(self.action_dim+1)/2))
         l, _ = naf_net.fc_layer(self.hidden_out, theta_l, tf.identity,'l_layer')
 
-        # theta_mu = naf_net.theta_fc(neurons_layer2, self.action_dim)
-
-        theta_mu = [tf.Variable(tf.random_uniform((neurons_layer2,self.action_dim),-1e-3, 1e-3), name='1w'),
-                    tf.Variable(tf.random_uniform([self.action_dim],-1e-3, 1e-3), name='1b')]
+        theta_mu = naf_net.theta_fc(neurons_layer2, self.action_dim)
+        # theta_mu = [tf.Variable(tf.random_uniform((neurons_layer2,self.action_dim),-1e-3, 1e-3), name='1w'),
+        #             tf.Variable(tf.random_uniform([self.action_dim],-1e-3, 1e-3), name='1b')]
         self.mu, _ = naf_net.fc_layer(self.hidden_out, theta_mu, tf.tanh, 'mu_layer')
 
         #prime net:
@@ -150,10 +149,11 @@ class NAF():
 
         log_grad = [plotting.grad_histograms(grads_and_vars)]
 
-        self.log_all = tf.merge_summary(log_obs + log_act + log_act2)
+        # self.log_all = tf.merge_summary(log_obs + log_act + log_act2)
+        self.log_all =  tf.scalar_summary('mean squared tderror', self.loss)
 
         plotting.hist_summaries(*list(theta_v_prime + theta_hidden_prime))
-        tf.scalar_summary('mean squared tderror', self.loss)
+
 
 
         # Merge all the summaries and write them out to /tmp/mnist_logs (by default)
@@ -264,9 +264,12 @@ class NAF():
 
         dict_ = feed_dict()
         summary, _, mse_val = self.sess.run([self.log_all, self.train_step, self.loss], feed_dict= dict_)
+        # summary = self.sess.run([], feed_dict= dict_)
+
 
         if self.step % 10 == 0:
             self.train_writer.add_summary(summary, self.step)
+            print('writing output')
 
         if self.step % 1000 == 0:
             print('result after minibatch no. {} : mean squared error: {}'.format(self.step, mse_val))
