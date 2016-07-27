@@ -14,54 +14,50 @@ def init_weight(shape, fanin=None, value = None):
     if value != None:
         return tf.constant(value,shape= shape)
 
-    v = 1 / np.sqrt(fanin)
+    v = 2 / np.sqrt(fanin)  #   only for testing !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    # v = 0.001
     # tf.random_uniform(shape, minval=-v, maxval=v)
-    return tf.truncated_normal(shape, v)
+    return tf.truncated_normal(shape, 0, v)
 
 class cnn_config:
     def __init__(self, dimO):
         self.input_maps = 3
 
         self.kernel_size = 4
-        self.no_kerneles_conv1 = 32
-        self.no_kerneles_conv2 = 32
-        self.no_kerneles_conv3 = 32
+        self.no_kernels_conv1 = 32
+        self.no_kernels_conv2 = 32
+        self.no_kernels_conv3 = 32
 
         self.num_fc1 = 200
         self.num_fc2 = 200
 
-        # self.no_kerneles_conv1 = 1
-        # self.no_kerneles_conv2 = 1
-        # self.no_kerneles_conv3 = 1
-        #
-        # self.num_fc1 = 2
-        # self.num_fc2 = 2
 
-        self.fanin_conv1 = dimO[0]*dimO[1]*self.input_maps
-        self.fanin_conv2 = dimO[0]/2*dimO[1]/2*self.no_kerneles_conv1
-        self.fanin_conv3 = dimO[0]/4*dimO[1]/4*self.no_kerneles_conv2
-        self.fanin_fc1 = dimO[0]/8*dimO[1]/8*self.no_kerneles_conv3
+        self.fanin_conv1 = self.kernel_size*self.kernel_size*self.input_maps
+        print('fanin_conv1:', self.fanin_conv1)
+        self.fanin_conv2 = self.kernel_size*self.kernel_size*self.no_kernels_conv1
+        self.fanin_conv3 = self.kernel_size*self.kernel_size*self.no_kernels_conv2
+        self.fanin_fc1 = dimO[0]/8*dimO[1]/8*self.no_kernels_conv3
         self.fanin_fc2 = self.num_fc1
         self.fanin_fc3 = self.num_fc2
 
         # 4*4*32*3 + 4*4*32*32 + 4*4*32*32 + 32*8*8*200 + 200*200
-        print('total number of weights: ',  self.input_maps*self.kernel_size*self.kernel_size*self.no_kerneles_conv1 +
-                                            self.no_kerneles_conv1*self.kernel_size*self.kernel_size*self.no_kerneles_conv2 +
-                                            self.no_kerneles_conv2*self.kernel_size*self.kernel_size*self.no_kerneles_conv3 +
-                                            self.no_kerneles_conv3*dimO[0]*dimO[1]/8/8*self.num_fc1 +
-                                            self.num_fc1*self.num_fc2)
+        print('total number of weights: ', self.input_maps * self.kernel_size * self.kernel_size * self.no_kernels_conv1 +
+              self.no_kernels_conv1 * self.kernel_size * self.kernel_size * self.no_kernels_conv2 +
+              self.no_kernels_conv2 * self.kernel_size * self.kernel_size * self.no_kernels_conv3 +
+              self.no_kernels_conv3 * dimO[0] * dimO[1] / 8 / 8 * self.num_fc1 +
+              self.num_fc1 * self.num_fc2)
 
 def theta_mu(dimA, c):
 
     with tf.variable_scope("theta_mu"):
-        return [tf.Variable(init_weight([c.kernel_size, c.kernel_size, c.input_maps, c.no_kerneles_conv1], fanin= c.fanin_conv1), name='W1_conv'),
-                tf.Variable(init_weight([c.no_kerneles_conv1], value= 0.), name='b1_conv'),
+        return [tf.Variable(init_weight([c.kernel_size, c.kernel_size, c.input_maps, c.no_kernels_conv1], fanin= c.fanin_conv1), name='W1_conv'),
+                tf.Variable(init_weight([c.no_kernels_conv1], value= 0.), name='b1_conv'),
 
-                tf.Variable(init_weight([c.kernel_size, c.kernel_size, c.no_kerneles_conv1, c.no_kerneles_conv2], fanin= c.fanin_conv2), name='W2_conv'),
-                tf.Variable(init_weight([c.no_kerneles_conv2], value= 0.), name='b2_conv'),
+                tf.Variable(init_weight([c.kernel_size, c.kernel_size, c.no_kernels_conv1, c.no_kernels_conv2], fanin= c.fanin_conv2), name='W2_conv'),
+                tf.Variable(init_weight([c.no_kernels_conv2], value= 0.), name='b2_conv'),
 
-                tf.Variable(init_weight([c.kernel_size, c.kernel_size, c.no_kerneles_conv2, c.no_kerneles_conv3], fanin= c.fanin_conv3), name='W3_conv'),
-                tf.Variable(init_weight([c.no_kerneles_conv3], value= 0.), name='b3_conv'),
+                tf.Variable(init_weight([c.kernel_size, c.kernel_size, c.no_kernels_conv2, c.no_kernels_conv3], fanin= c.fanin_conv3), name='W3_conv'),
+                tf.Variable(init_weight([c.no_kernels_conv3], value= 0.), name='b3_conv'),
 
                 tf.Variable(init_weight([c.fanin_fc1, c.num_fc1], fanin=c.fanin_fc1), name='W_fc1'),
                 tf.Variable(init_weight([c.num_fc1], value= 0.), name='b_fc1'),
@@ -92,16 +88,16 @@ def mu_net(obs, theta, c, name='mu_net'):
 def theta_q(dimO, dimA, c):
 
     with tf.variable_scope("theta_q"):
-        return [tf.Variable(init_weight([c.kernel_size, c.kernel_size, c.input_maps, c.no_kerneles_conv1], fanin= c.fanin_conv1), name='W1_conv'),
-                tf.Variable(init_weight([c.no_kerneles_conv1], value= 0.), name='b1_conv'),
+        return [tf.Variable(init_weight([c.kernel_size, c.kernel_size, c.input_maps, c.no_kernels_conv1], fanin= c.fanin_conv1), name='W1_conv'),
+                tf.Variable(init_weight([c.no_kernels_conv1], value= 0.), name='b1_conv'),
 
-                tf.Variable(init_weight([c.kernel_size, c.kernel_size, c.no_kerneles_conv1, c.no_kerneles_conv2], fanin= c.fanin_conv2), name='W2_conv'),
-                tf.Variable(init_weight([c.no_kerneles_conv2], value= 0.), name='b2_conv'),
+                tf.Variable(init_weight([c.kernel_size, c.kernel_size, c.no_kernels_conv1, c.no_kernels_conv2], fanin= c.fanin_conv2), name='W2_conv'),
+                tf.Variable(init_weight([c.no_kernels_conv2], value= 0.), name='b2_conv'),
 
-                tf.Variable(init_weight([c.kernel_size, c.kernel_size, c.no_kerneles_conv2, c.no_kerneles_conv3], fanin= c.fanin_conv3), name='W3_conv'),
-                tf.Variable(init_weight([c.no_kerneles_conv3], value= 0.), name='b3_conv'),
+                tf.Variable(init_weight([c.kernel_size, c.kernel_size, c.no_kernels_conv2, c.no_kernels_conv3], fanin= c.fanin_conv3), name='W3_conv'),
+                tf.Variable(init_weight([c.no_kernels_conv3], value= 0.), name='b3_conv'),
 
-                tf.Variable(init_weight([c.no_kerneles_conv3 * dimO[0]/8 * dimO[1]/8 + dimA, c.num_fc1], fanin= c.fanin_fc1), name='W_fc1'),
+                tf.Variable(init_weight([c.no_kernels_conv3 * dimO[0]/8 * dimO[1]/8 + dimA, c.num_fc1], fanin= c.fanin_fc1), name='W_fc1'),
                 tf.Variable(init_weight([c.num_fc1], value= 0.), name='b_fc1'),
 
                 tf.Variable(init_weight([c.num_fc1, c.num_fc2], fanin= c.fanin_fc2), name='W_fc2'),

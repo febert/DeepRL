@@ -27,20 +27,25 @@ from PIL import Image
 from PIL import ImageOps
 
 import cProfile
+import os
+os.environ["TF_MIN_GPU_MULTIPROCESSOR_COUNT"] = "3"
+
 
 class ddpg():
 
     def __init__(self,
-                 learning_rates= (5e-5, 5e-4),
+                 # learning_rates= (5e-5, 5e-4),
+                 learning_rates=(0, 0), #   only for testing !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
                  # environment = 'MountainCarContinuous-v0',
+                 environment='AcrobotContinuous-v0',
                  # environment = 'Reacher-v1',
-                 environment = 'InvertedPendulum-v1',
+                 #environment = 'InvertedPendulum-v1',
                  noise_scale = 1,
                  enable_plotting = True,
                  ql2 = 0.01,
                  tensorboard_logs = True,
                  maxstep = 1e5,
-                 warmup = 10 #5e4
+                 warmup = 1 #e4
                  ):
 
         self.maxstep = maxstep
@@ -56,7 +61,7 @@ class ddpg():
         # start tf session
         self.sess = tf.InteractiveSession(config=tf.ConfigProto(
             inter_op_parallelism_threads=4,
-            log_device_placement=True,
+            log_device_placement=False,
             allow_soft_placement=True))
 
         self.step = 0
@@ -79,7 +84,7 @@ class ddpg():
         self.dim_actions = self.env.action_space.shape[0]
 
         self.env.reset()
-        print(self.env.render('rgb_array').shape)
+        # print(self.env.render('rgb_array').shape)
         self.dimO = [64, 64]
 
         print('observation dim', self.dimO)
@@ -101,10 +106,14 @@ class ddpg():
         return self
 
     def __del__(self):
+        self.train_writer.close()
+        tf.InteractiveSession.close(self.sess)
+        tf.reset_default_graph()
         print( "deling", self)
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         print('closing the interactive session')
+        self.train_writer.close()
         tf.InteractiveSession.close(self.sess)
         tf.reset_default_graph()
 
@@ -115,17 +124,18 @@ class ddpg():
         return action*ascale + actionmean
 
     def getframe(self):
-        if self.select_env == 'InvertedPendulum-v1':
+        if self.select_env == 'InvertedPendulum-v1':  # for mujoco envs:
             numpy_im = self.env.render('rgb_array')  #this gives uint8 numpy array
             im = Image.fromarray(numpy_im, 'RGB')
             return np.asarray(im.convert('L').resize((self.dimO[0], self.dimO[1])), dtype= np.uint8)
 
-        return np.asarray(ImageOps.flip(self.env.render('rgb_array').convert('L').resize((self.dimO[0], self.dimO[1]), Image.BILINEAR)))
+        im = self.env.render('rgb_array')  # this gives uint8 numpy array
+        return np.asarray(ImageOps.flip(im.convert('L').resize((self.dimO[0], self.dimO[1]))))
 
     def run_episode(self, enable_render=False, limit=5000, test_run = True):
 
         self.env.reset()
-        state = self.getframe()
+        # state = self.getframe()
         # print('state size :', state.shape)
         # print(state)
         # print(np.min(state), np.max(state))
@@ -137,7 +147,6 @@ class ddpg():
         for t in range(3):
             self.env.step(self.env.action_space.sample())
             state[...,t] = self.getframe()
-            print('dtype', state.dtype)
 
         self.ou_process.reset()
 
@@ -163,11 +172,11 @@ class ddpg():
             action = self.apply_limits(action)
             action = action.squeeze()
 
-            t_1 = time.clock()
+            # t_1 = time.clock()
             for t in range(3):
                 _ , reward, done, _ = self.env.step(action)
                 state_prime[...,t] = self.getframe()
-            print('time to retrieve 3 pictures:', time.clock() - t_1)
+            # print('time to retrieve 3 pictures:', time.clock() - t_1)
 
             accum_reward += reward
 
@@ -318,6 +327,7 @@ class ddpg():
 
         # Merge all the summaries and write them out to /tmp/mnist_logs (by default)
         self.merged = tf.merge_all_summaries()
+
         self.train_writer = tf.train.SummaryWriter(self.summaries_dir, sess.graph)
         tf.initialize_all_variables().run()
 
@@ -356,7 +366,9 @@ class ddpg():
 
         t = time.clock()
         if self.tensorboard_logs:
-            summary, _, _, mse_val = self.sess.run([self.merged, self.q_train_step, self.mu_train_step, self.q_loss], feed_dict= dict_)
+            print('merged summary', self.merged)
+            summary, mse_val = self.sess.run([self.merged, self.q_loss ], feed_dict=dict_)
+            # summary, _, _, mse_val = self.sess.run([self.merged, self.q_train_step, self.mu_train_step, self.q_loss], feed_dict= dict_)
             if self.step % 10 == 0:
                 self.train_writer.add_summary(summary, self.step)
         else:
@@ -369,10 +381,10 @@ class ddpg():
             print('result after minibatch no. {} : mean squared error: {}'.format(self.step, mse_val))
             # print('batch train data states', dict_[self.x_states])
             # print('batch train data actions', dict_[self.x_action])
-            if self.select_env == 'MountainCarContinuous-v0':
-                self.plot_learned_mu()
-                self.plot_replay_memory_2d_state_histogramm()
-                self.plot_q_func()
+            # if self.select_env == 'MountainCarContinuous-v0':
+            #     self.plot_learned_mu()
+            #     self.plot_replay_memory_2d_state_histogramm()
+            #     self.plot_q_func()
 
             # print('qs: ', self.q.eval(feed_dict = {self.x_states: dict_[self.x_states], self.x_action: dict_[self.x_action]}))
 
@@ -489,7 +501,7 @@ class ddpg():
         s = []
         for grad, var in grads_and_vars:
             s.append(tf.histogram_summary(var.op.name + '', var))
-            s.append(tf.histogram_summary(var.op.name + '/gradients', grad))
+            # s.append(tf.histogram_summary(var.op.name + '/gradients', grad))  #   only for testing !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         return tf.merge_summary(s)
 
 if __name__ == '__main__':
