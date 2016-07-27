@@ -34,8 +34,7 @@ os.environ["TF_MIN_GPU_MULTIPROCESSOR_COUNT"] = "3"
 class ddpg():
 
     def __init__(self,
-                 # learning_rates= (5e-5, 5e-4),
-                 learning_rates=(0, 0), #   only for testing !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                 learning_rates= (5e-5, 5e-4),
                  # environment = 'MountainCarContinuous-v0',
                  environment='AcrobotContinuous-v0',
                  # environment = 'Reacher-v1',
@@ -44,8 +43,8 @@ class ddpg():
                  enable_plotting = True,
                  ql2 = 0.01,
                  tensorboard_logs = True,
-                 maxstep = 1e5,
-                 warmup = 1 #e4
+                 maxstep = 1e4,
+                 warmup = 1000 #1e4
                  ):
 
         self.maxstep = maxstep
@@ -185,10 +184,10 @@ class ddpg():
                 self.samples_count += 1
 
                 if (len(self.replay_memory) > self.warmup) and (self.samples_count % (self.batch_size/2) == 0):
-                    t_2 = time.clock()
+                    # t_2 = time.clock()
                     # cProfile.runctx('self.train_networks()',globals(),locals())
                     self.train_networks()
-                    print('time of sgd step:', time.clock() - t_2)
+                    # print('time of sgd step:', time.clock() - t_2)
 
 
             state = state_prime
@@ -232,7 +231,7 @@ class ddpg():
 
             if (it+1) % test_freq == 0:
                 # perform a test run with the target policy:
-                self.test_lengths.append(self.run_episode(test_run= True, enable_render=False))
+                self.test_lengths.append(self.run_episode(test_run= True, enable_render=False, limit= 1000))
 
             if (it+1) % plot_freq == 0:
                 self.plot_episode_lengths(self.train_lengths)
@@ -285,7 +284,10 @@ class ddpg():
         # q optimization
         self.act_train = tf.placeholder(tf.float32, [None, self.dim_actions], name='actions')
         self.rew = tf.placeholder(tf.float32, [None, 1], name='rewards')
-        self.obs2 = tf.placeholder(tf.float32, [None, self.dimO[0], self.dimO[1], 3], name='states_prime')
+
+
+        self.obs2_raw = tf.placeholder(tf.uint8, [None, self.dimO[0], self.dimO[1], 3], name='states_prime')
+        obs2 = tf.cast(self.obs2_raw, tf.float32) / 255.
 
         self.term2 = tf.placeholder(tf.bool, [None, 1], name='term2')
 
@@ -293,8 +295,8 @@ class ddpg():
         self.q_train, sum_qq = q_net(self.obs, self.act_train, self.theta_q,cnn_conf, name='qs_a')
 
         # q targets
-        act2, sum_p2 = mu_net(self.obs2, self.theta_mu_prime, cnn_conf,name='mu_of_sprime')
-        self.q2, sum_q2 = q_net(self.obs2, act2, self.theta_q_prime, cnn_conf, name= 'qsprime_aprime')
+        act2, sum_p2 = mu_net(obs2, self.theta_mu_prime, cnn_conf,name='mu_of_sprime')
+        self.q2, sum_q2 = q_net(obs2, act2, self.theta_q_prime, cnn_conf, name= 'qsprime_aprime')
         q_target = tf.stop_gradient(tf.select(self.term2, self.rew, self.rew + self.gamma * tf.reshape(self.q2, [self.batch_size,1]) ))
 
         # q loss
@@ -355,7 +357,7 @@ class ddpg():
             return {self.obs_raw: states.squeeze().reshape(self.batch_size, self.dimO[0], self.dimO[1],3),
                     self.act_train: action.squeeze().reshape(self.batch_size, self.dim_actions),
                     self.rew: reward.squeeze().reshape(self.batch_size,1),
-                    self.obs2: states_prime.squeeze().reshape(self.batch_size, self.dimO[0], self.dimO[1],3),
+                    self.obs2_raw: states_prime.squeeze().reshape(self.batch_size, self.dimO[0], self.dimO[1],3),
                     self.term2: term2.squeeze().reshape(self.batch_size,1),
                     self.learning_rate_actor: self.lr_actor,
                     self.learning_rate_critic: self.lr_critic,
@@ -364,7 +366,7 @@ class ddpg():
         dict_ = feed_dict()
 
 
-        t = time.clock()
+
         if self.tensorboard_logs:
             print('merged summary', self.merged)
             summary, mse_val = self.sess.run([self.merged, self.q_loss ], feed_dict=dict_)
@@ -374,10 +376,8 @@ class ddpg():
         else:
             _, _, mse_val = self.sess.run([self.q_train_step, self.mu_train_step, self.q_loss], feed_dict= dict_)
 
-        print('sgd step only:', time.clock() - t)
 
-
-        if self.step % 1000 == 0:
+        if self.step % 100 == 0:
             print('result after minibatch no. {} : mean squared error: {}'.format(self.step, mse_val))
             # print('batch train data states', dict_[self.x_states])
             # print('batch train data actions', dict_[self.x_action])
@@ -501,7 +501,7 @@ class ddpg():
         s = []
         for grad, var in grads_and_vars:
             s.append(tf.histogram_summary(var.op.name + '', var))
-            # s.append(tf.histogram_summary(var.op.name + '/gradients', grad))  #   only for testing !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+            s.append(tf.histogram_summary(var.op.name + '/gradients', grad))
         return tf.merge_summary(s)
 
 if __name__ == '__main__':

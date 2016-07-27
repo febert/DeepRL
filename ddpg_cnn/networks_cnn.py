@@ -14,10 +14,10 @@ def init_weight(shape, fanin=None, value = None):
     if value != None:
         return tf.constant(value,shape= shape)
 
-    v = 2 / np.sqrt(fanin)  #   only for testing !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    # v = 0.001
+    v = 2 / np.sqrt(fanin)
+
     # tf.random_uniform(shape, minval=-v, maxval=v)
-    return tf.truncated_normal(shape, 0, v)
+    return tf.truncated_normal(shape, mean= 0, stddev=v)
 
 class cnn_config:
     def __init__(self, dimO):
@@ -79,7 +79,7 @@ def mu_net(obs, theta, c, name='mu_net'):
         h_3_flat = tf.reshape(h3, [-1, c.fanin_fc1])
         h4 = tf.nn.relu(tf.matmul(h_3_flat, theta[6]) + theta[7])
         h5 = tf.nn.relu(tf.matmul(h4, theta[8]) + theta[9])
-        h6 = tf.identity(tf.matmul(h5, theta[10]) + theta[11])
+        h6 = tf.nn.tanh(tf.matmul(h5, theta[10]) + theta[11])
 
         summary = hist_summaries(h0, h1, h2, h3, h4, h5, h6)
         return h6, summary
