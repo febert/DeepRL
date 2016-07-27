@@ -217,7 +217,7 @@ class ddpg():
         v = 1 / np.sqrt(fanin)  # * np.sqrt(2.)
 
         # tf.random_uniform(shape, minval=-v, maxval=v)
-        return tf.truncated_normal(shape, v)
+        return tf.truncated_normal(shape, mean=0, stddev= v)
 
     def create_theta_p(self,dimO, dimA):
         with tf.variable_scope("theta_p"):
@@ -553,5 +553,5 @@ class ddpg():
 
 if __name__ == '__main__':
 
-    car = ddpg(environment= 'Reacher-v1')
+    car = ddpg(environment= 'MountainCarContinuous-v0')
     car.main()
