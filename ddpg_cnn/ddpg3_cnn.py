@@ -56,7 +56,7 @@ class ddpg():
         # start tf session
         self.sess = tf.InteractiveSession(config=tf.ConfigProto(
             inter_op_parallelism_threads=4,
-            log_device_placement=False,
+            log_device_placement=True,
             allow_soft_placement=True))
 
         self.step = 0
@@ -116,26 +116,28 @@ class ddpg():
 
     def getframe(self):
         if self.select_env == 'InvertedPendulum-v1':
-            im = Image.fromarray(self.env.render('rgb_array'), 'RGB')
-            return np.asarray(im.convert('L').resize((self.dimO[0], self.dimO[1]), Image.BILINEAR))/255.
+            numpy_im = self.env.render('rgb_array')  #this gives uint8 numpy array
+            im = Image.fromarray(numpy_im, 'RGB')
+            return np.asarray(im.convert('L').resize((self.dimO[0], self.dimO[1])), dtype= np.uint8)
 
-        return np.asarray(ImageOps.flip(self.env.render('rgb_array').convert('L').resize((self.dimO[0], self.dimO[1]), Image.BILINEAR)))/255.
+        return np.asarray(ImageOps.flip(self.env.render('rgb_array').convert('L').resize((self.dimO[0], self.dimO[1]), Image.BILINEAR)))
 
     def run_episode(self, enable_render=False, limit=5000, test_run = True):
 
         self.env.reset()
         state = self.getframe()
-        print('state size :', state.shape)
-        print(state)
-        print(np.min(state), np.max(state))
-        plt.imshow(state,cmap='gray', interpolation='none')
-        plt.show()
+        # print('state size :', state.shape)
+        # print(state)
+        # print(np.min(state), np.max(state))
+        # plt.imshow(state,cmap='gray', interpolation='none')
+        # plt.show()
 
-        state = np.zeros((self.dimO[0], self.dimO[1], 3))
+        state = np.zeros((self.dimO[0], self.dimO[1], 3), dtype= np.uint8)
         state_prime = np.zeros((self.dimO[0], self.dimO[1], 3))
         for t in range(3):
             self.env.step(self.env.action_space.sample())
             state[...,t] = self.getframe()
+            print('dtype', state.dtype)
 
         self.ou_process.reset()
 
@@ -162,11 +164,9 @@ class ddpg():
             action = action.squeeze()
 
             t_1 = time.clock()
-            asdf = []
             for t in range(3):
                 _ , reward, done, _ = self.env.step(action)
-                # state_prime[...,t] = self.getframe()
-                asdf.append(self.getframe())
+                state_prime[...,t] = self.getframe()
             print('time to retrieve 3 pictures:', time.clock() - t_1)
 
             accum_reward += reward
@@ -177,7 +177,8 @@ class ddpg():
 
                 if (len(self.replay_memory) > self.warmup) and (self.samples_count % (self.batch_size/2) == 0):
                     t_2 = time.clock()
-                    cProfile.runctx('self.train_networks()',globals(),locals())
+                    # cProfile.runctx('self.train_networks()',globals(),locals())
+                    self.train_networks()
                     print('time of sgd step:', time.clock() - t_2)
 
 
@@ -248,7 +249,9 @@ class ddpg():
         self.theta_mu_prime, update_mu_averages = exponential_moving_averages(self.theta_mu, 0.001)
         self.theta_q_prime, update_q_averages = exponential_moving_averages(self.theta_q, 0.001)
 
-        self.obs = tf.placeholder(tf.float32, [None, self.dimO[0], self.dimO[1], 3], name='x-states')
+        self.obs_raw = tf.placeholder(tf.uint8, [None, self.dimO[0], self.dimO[1], 3], name='x-states')
+
+        self.obs = tf.cast(self.obs_raw,tf.float32)/255.
 
         self.mu, sum_p = mu_net(self.obs, self.theta_mu, cnn_conf)
 
@@ -339,7 +342,7 @@ class ddpg():
 
             states, action, reward, states_prime, term2 = self.get_train_batch()
 
-            return {self.obs: states.squeeze().reshape(self.batch_size, self.dimO[0], self.dimO[1],3),
+            return {self.obs_raw: states.squeeze().reshape(self.batch_size, self.dimO[0], self.dimO[1],3),
                     self.act_train: action.squeeze().reshape(self.batch_size, self.dim_actions),
                     self.rew: reward.squeeze().reshape(self.batch_size,1),
                     self.obs2: states_prime.squeeze().reshape(self.batch_size, self.dimO[0], self.dimO[1],3),
