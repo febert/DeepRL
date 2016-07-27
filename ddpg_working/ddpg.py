@@ -3,11 +3,13 @@ import ddpg_nets_dm as nets_dm
 from replay_memory import ReplayMemory
 import numpy as np
 
+from collections import deque
+
 flags = tf.app.flags
 FLAGS = flags.FLAGS
 flags.DEFINE_float('ou_sigma', 0.2, '')
 flags.DEFINE_integer('warmup', 50000, 'time without training but only filling the replay memory')
-flags.DEFINE_bool('warmq', True, 'train Q during warmup time')
+flags.DEFINE_bool('warmq', False, 'train Q during warmup time')
 flags.DEFINE_float('log', .01, 'probability of writing a tensorflow log at each timestep')
 flags.DEFINE_integer('bsize', 32, 'minibatch size')
 flags.DEFINE_bool('async', True, 'update policy and q function concurrently')
@@ -38,6 +40,10 @@ class Agent:
 
         # init replay memory
         self.rm = ReplayMemory(rm_size, dimO, dimA, dtype=np.__dict__[rm_dtype])
+
+        # own replay memory
+        self.replay_memory = deque(maxlen=rm_size)
+
         # start tf session
         self.sess = tf.Session(config=tf.ConfigProto(
             inter_op_parallelism_threads=threads,
@@ -62,7 +68,7 @@ class Agent:
         act_expl = act_test + noise
 
         # test
-        q, sum_q = nets.qfunction(obs, act_test, self.theta_q)
+        q, sum_q = nets.qfunction(obs, act_test, self.theta_q, name= 'q_mu_of_s')
         # training
         # policy loss
         meanq = tf.reduce_mean(q, 0)
@@ -81,10 +87,10 @@ class Agent:
         obs2 = tf.placeholder(tf.float32, [FLAGS.bsize] + dimO, "obs2")
         term2 = tf.placeholder(tf.bool, [FLAGS.bsize], "term2")
         # q
-        q_train, sum_qq = nets.qfunction(obs, act_train, self.theta_q)
+        q_train, sum_qq = nets.qfunction(obs, act_train, self.theta_q, name= 'qs_a')
         # q targets
         act2, sum_p2 = nets.policy(obs2, theta=self.theta_pt)
-        q2, sum_q2 = nets.qfunction(obs2, act2, theta=self.theta_qt)
+        q2, sum_q2 = nets.qfunction(obs2, act2, theta=self.theta_qt, name='qsprime_aprime')
         q_target = tf.stop_gradient(tf.select(term2, rew, rew + discount * q2))
         # q_target = tf.stop_gradient(rew + discount * q2)
         # q loss
@@ -110,6 +116,7 @@ class Agent:
         log_noise = [tf.histogram_summary('noise', noise_var)]
         log_train = log_obs + log_act + log_act2 + log_misc + log_grad + log_noise
 
+        merged = tf.merge_all_summaries()
         # initialize tf log writer
         self.writer = tf.train.SummaryWriter(FLAGS.outdir + "/tf", self.sess.graph, flush_secs=20)
 
@@ -123,8 +130,9 @@ class Agent:
             self._act_expl = Fun(obs, act_expl)
             self._reset = Fun([], self.ou_reset)
             self._train_q = Fun([obs, act_train, rew, obs2, term2], [train_q], log_train, self.writer)
-            self._train_p = Fun([obs], [train_p], log_train, self.writer)
-            self._train = Fun([obs, act_train, rew, obs2, term2], [train_p, train_q], log_train, self.writer)
+            self._train_p = Fun([obs], [train_p])
+            self._train_p = Fun([obs], [train_p], log_obs, self.writer)
+            self._train = Fun([obs, act_train, rew, obs2, term2], [train_p, train_q], merged, self.writer)
 
         # initialize tf variables
         self.saver = tf.train.Saver(max_to_keep=1)
@@ -148,7 +156,7 @@ class Agent:
         self.action = np.atleast_1d(np.squeeze(action, axis=0))  # TODO: remove this hack
         return self.action
 
-    def observe(self, rew, term, obs2, test=False):
+    def observe(self, rew, term, obs2, test=False, perform_trainstep= True):
 
         obs1 = self.observation
         self.observation = obs2
@@ -157,15 +165,16 @@ class Agent:
         if not test:
             self.t = self.t + 1
             self.rm.enqueue(obs1, term, self.action, rew)
+            self.replay_memory.append((obs1, self.action, rew, obs2, term))
 
             if self.t > FLAGS.warmup:
                 # print('warmed up')
-                self.train()
+                if perform_trainstep: self.train()
 
-            elif FLAGS.warmq and self.rm.n > 1000:
-                # Train Q on warmup
-                obs, act, rew, ob2, term2, info = self.rm.minibatch(size=FLAGS.bsize)
-                self._train_q(obs, act, rew, ob2, term2, log=(np.random.rand() < FLAGS.log), global_step=self.t)
+            # elif FLAGS.warmq and self.rm.n > 1000:
+            #     # Train Q on warmup
+            #     obs, act, rew, ob2, term2, info = self.rm.minibatch(size=FLAGS.bsize)
+            #     self._train_q(obs, act, rew, ob2, term2, log=(np.random.rand() < FLAGS.log), global_step=self.t)
 
                 # save parameters etc.
                 # if (self.t+45000) % 50000 == 0: # TODO: correct
@@ -173,7 +182,8 @@ class Agent:
                 #   print("DDPG Checkpoint: " + s)
 
     def train(self):
-        obs, act, rew, ob2, term2, info = self.rm.minibatch(size=FLAGS.bsize)
+        # obs, act, rew, ob2, term2, info = self.rm.minibatch(size=FLAGS.bsize)
+        obs, act, rew, ob2, term2, = self.get_train_batch()
         log = (np.random.rand() < FLAGS.log)
 
         if FLAGS.async:
@@ -188,6 +198,20 @@ class Agent:
 
     def __del__(self):
         self.sess.close()
+
+    def get_train_batch(self):
+
+        #selecting transitions randomly from the replay memory:
+        indices =  np.random.randint(0, len(self.replay_memory), [FLAGS.bsize])
+        transition_batch = [self.replay_memory[i] for i in indices]
+
+        states = np.asarray([transition_batch[i][0].squeeze() for i in range(FLAGS.bsize)])
+        actions = np.asarray([transition_batch[i][1] for i in range(FLAGS.bsize)])
+        rewards = np.asarray([transition_batch[i][2] for i in range(FLAGS.bsize)])
+        states_prime = np.asarray([transition_batch[i][3].squeeze() for i in range(FLAGS.bsize)])
+        term2 = np.asarray([transition_batch[i][4] for i in range(FLAGS.bsize)])
+
+        return states, actions, rewards, states_prime, term2
 
 
 # Tensorflow utils

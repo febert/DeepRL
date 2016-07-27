@@ -44,13 +44,13 @@ def plot_learned_mu(eval_mu, env):
 
 def plot_episode_lengths(data):
 
-        fig = plt.figure()
+    fig = plt.figure()
 
-        plt.plot(data)
+    plt.plot(abs(np.array(data)))
 
-        plt.yscale('log')
+    plt.yscale('log')
 
-        plt.xlabel("episodes")
-        plt.ylabel("timesteps")
+    plt.xlabel("episodes")
+    plt.ylabel("timesteps")
 
-        plt.show()
+    plt.show()
