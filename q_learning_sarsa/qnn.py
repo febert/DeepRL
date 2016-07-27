@@ -32,8 +32,9 @@ class qnn:
                  input_height = None,
                  input_channels = None,
                  ):
-        print("normaliztion mean", normalization_mean)
-        print("normalization var", normalization_var)
+        if not from_pixels:
+            print("normaliztion mean", normalization_mean)
+            print("normalization var", normalization_var)
 
         self.do_train_every_sample = do_train_every_sample
         # if env_name == 'CartPole-v0':
@@ -55,14 +56,14 @@ class qnn:
             if fan_in:
                 if not conv:
                     dim=shape[0]
+                    print("fc", dim)
                 else:
                     dim=shape[0]*shape[1]*shape[2]
+                    print("conv", dim, shape[0], shape[1], shape[2])
                 if act is None:
-                    pass
                     std=1.0/np.sqrt(dim)
                 elif act is tf.nn.relu:
-                    print('relu!!!!')
-                    print(dim)
+                    # print('relu!!!!')
                     std=np.sqrt(2.0)/np.sqrt(dim)
             else:
                 std=self.init_weights
@@ -112,9 +113,9 @@ class qnn:
                 normed:      batch-normalized maps
             """
             with tf.variable_scope(scope):
-                beta = tf.Variable(tf.constant(0.0, shape=[shape_x]),
+                beta = tf.Variable(tf.constant(0.0, shape=shape_x),
                                              name='beta', trainable=True)
-                gamma = tf.Variable(tf.constant(1.0, shape=[shape_x]),
+                gamma = tf.Variable(tf.constant(1.0, shape=shape_x),
                                               name='gamma', trainable=True)
                 # tf.histogram_summary('gamma', gamma)
                 batch_mean, batch_var = tf.nn.moments(x, axes= [0], name='moments')
@@ -127,66 +128,28 @@ class qnn:
                     with tf.control_dependencies([ema_apply_op]):
                         return tf.identity(batch_mean), tf.identity(batch_var)
 
-                # summary_batch_mean = ema.average(batch_mean)
-                # summary_var_mean = ema.average(batch_var)
-                # variable_summaries(summary_batch_mean, scope + '/batch_mean')
-                # variable_summaries(summary_var_mean, scope + '/batch_mean')
+                mean_avg = ema.average(batch_mean)
+                var_avg = ema.average(batch_var)
+                # tf.histogram_summary(scope + '/mean', mean_avg)
+                # tf.histogram_summary(scope + '/var', var_avg)
+                tf.histogram_summary(scope + '/beta', beta)
+                tf.histogram_summary(scope + '/gamma', gamma)
 
                 mean, var = tf.cond(self.phase_train,
                                     mean_var_with_update,
                                     lambda: (ema.average(batch_mean), ema.average(batch_var)))
-                names = tf.constant([scope + '/mean_x', scope + '/mean_v'])
-                tf.scalar_summary(names, mean)
-                # tf.scalar_summary('mean', mean)
-                # tf.scalar_summary('var', var)
-                normed = tf.nn.batch_normalization(x, mean, var, beta, gamma, 1e-3)
-
-            return normed, (mean, var, beta, gamma)
-
-        def dual_batch_norm(x,shape_x, scope):
-            """
-            Batch normalization on convolutional maps.
-            Args:
-                x:           Tensor, 4D BHWD input maps
-                n_out:       integer, depth of input maps
-                scope:       string, variable scope
-            Return:
-                normed:      batch-normalized maps
-            """
-            with tf.variable_scope(scope):
-                beta = tf.Variable(tf.constant(0.0, shape=[shape_x]),
-                                             name='beta', trainable=True)
-                gamma = tf.Variable(tf.constant(1.0, shape=[shape_x]),
-                                              name='gamma', trainable=True)
-                # tf.histogram_summary('gamma', gamma)
-                batch_mean, batch_var = tf.nn.moments(x, axes= [0], name='moments')
-                # tf.scalar_summary('batch_mean', batch_mean)
-                # tf.scalar_summary('batch_var', batch_var)
-                ema = tf.train.ExponentialMovingAverage(decay=0.9)
-
-                def mean_var_with_update():
-                    ema_apply_op = ema.apply([batch_mean, batch_var])
-                    with tf.control_dependencies([ema_apply_op]):
-                        return tf.identity(batch_mean), tf.identity(batch_var)
-
-                # summary_batch_mean = ema.average(batch_mean)
-                # summary_var_mean = ema.average(batch_var)
-                # variable_summaries(summary_batch_mean, scope + '/batch_mean')
-                # variable_summaries(summary_var_mean, scope + '/batch_mean')
-
-                mean, var = tf.cond(self.phase_train,
-                                    mean_var_with_update,
-                                    lambda: (ema.average(batch_mean), ema.average(batch_var)))
-                names = tf.constant([scope + '/mean_x', scope + '/mean_v'])
-                tf.scalar_summary(names, mean)
-                # tf.scalar_summary('mean', mean)
-                # tf.scalar_summary('var', var)
                 normed = tf.nn.batch_normalization(x, mean, var, beta, gamma, 1e-3)
 
             return normed, (mean, var, beta, gamma)
 
         # batch norm parameter
         self.phase_train = tf.placeholder(tf.bool, name='phase_train')
+
+        def dual_batch_norm(x_dual,shape_x,scope):
+            x_dual_norm_0, bn_vars = batch_norm(x_dual[0], shape_x, scope)
+            with tf.name_scope(scope):
+                x_dual_norm_1 = tf.nn.batch_normalization(x_dual[1], *bn_vars, variance_epsilon=1e-3)
+            return (x_dual_norm_0, x_dual_norm_1)
 
         def nn_layer(input_tensor, input_dim, output_dim, layer_name, act=tf.nn.relu):
             """Reusable code for making a simple neural net layer.
@@ -402,8 +365,15 @@ class qnn:
 
         if from_pixels:
             with tf.name_scope('input'):
-                self.s = tf.placeholder(tf.float32, shape = [None,input_height,input_width,input_channels], name='s-input')
-                self.s_prime = tf.placeholder(tf.float32, shape = [None,input_height,input_width,input_channels], name='s_prime-input')
+                self.s = tf.placeholder(tf.uint8, shape = [None,input_height,input_width,input_channels], name='s-input')
+                self.s_prime = tf.placeholder(tf.uint8, shape = [None,input_height,input_width,input_channels], name='s_prime-input')
+                with tf.name_scope('uint_to_float'):
+                    # self.s = (tf.to_float(self.s)/255.0 - 0.985126828509) / 0.078827111467
+                    # self.s_prime = (tf.to_float(self.s_prime)/255.0 - 0.985126828509) / 0.078827111467
+                    self.s = 1.0 - tf.to_float(self.s)/255.0
+                    self.s_prime = 1.0 - tf.to_float(self.s_prime)/255.0
+                # BATCH NORM
+                # self.s_norm, self.s_prime_norm = dual_batch_norm((self.s, self.s_prime), [input_height,input_width,input_channels], 'batch_norm')
 
                 # reward
                 self.r = tf.placeholder(tf.float32, shape = [None], name='reward')
@@ -430,17 +400,24 @@ class qnn:
         if from_pixels:
             # APPLY CONVOLUTIONAL LAYERS
             hidden = nn_conv_dual_layer_with_decay((self.s, self.s_prime), [8,8,input_channels,32], [1,4,4,1], 'conv_layer'+str(1), ema_ops_list, act=tf.nn.relu, decay=ema_decay_rate)
+            # hidden = nn_conv_dual_layer_with_decay((self.s_norm, self.s_prime_norm), [8,8,input_channels,32], [1,4,4,1], 'conv_layer'+str(1), ema_ops_list, act=tf.nn.relu, decay=ema_decay_rate)
+            # hidden = dual_batch_norm(hidden, [np.ceil(input_width/4), np.ceil(input_width/4), 32], 'conv1_batch_norm')
             hidden = nn_conv_dual_layer_with_decay(hidden, [4,4,32,64], [1,2,2,1], 'conv_layer'+str(2), ema_ops_list, act=tf.nn.relu, decay=ema_decay_rate)
+            # hidden = dual_batch_norm(hidden, [np.ceil(np.ceil(input_width/4)/2), np.ceil(np.ceil(input_width/4)/2), 64], 'conv2_batch_norm')
             hidden = nn_conv_dual_layer_with_decay(hidden, [3,3,64,64], [1,1,1,1], 'conv_layer'+str(3), ema_ops_list, act=tf.nn.relu, decay=ema_decay_rate)
+            # hidden = dual_batch_norm(hidden, [np.ceil(np.ceil(input_width/4)/2), np.ceil(np.ceil(input_width/4)/2), 64], 'conv3_batch_norm')
             # last_conv_hidden_shape = tf.shape(hidden[0])
             # print(last_conv_hidden_shape)
             # last_conv_layer_output_size = last_conv_hidden_shape[1]*last_conv_hidden_shape[2]*last_conv_hidden_shape[3]
             last_conv_layer_output_size = np.int(np.ceil(np.ceil(input_width/4)/2) * np.ceil(np.ceil(input_height/4)/2) * 64)
-            print(last_conv_layer_output_size)
             hidden_flat = tf.reshape(hidden[0], [-1, last_conv_layer_output_size]), tf.reshape(hidden[1], [-1, last_conv_layer_output_size])
             hidden_prev = nn_dual_layer_with_decay(hidden_flat, last_conv_layer_output_size, 512, 'fc_layer'+str(1), ema_ops_list, decay=ema_decay_rate)
+            # hidden_prev = dual_batch_norm(hidden_prev, [512], 'fc_batch_norm')
 
             last_hidden_size=512
+
+            # RECONSTRUCTION
+
 
         # self.is_a_prime_external = tf.placeholder(tf.bool)
         # q_all contains all the q values for all the actions
@@ -469,12 +446,13 @@ class qnn:
             self.learning_rate = tf.placeholder(tf.float32, shape=[])
             # self.learning_rate = tf.constant(learning_rate)
             print('descending with ', descent_method)
-            if descent_method == 'adam':
-                self.train_step = tf.train.AdamOptimizer(self.learning_rate).minimize(mean_squares_error)
-            elif descent_method == 'grad':
-                self.train_step = tf.train.GradientDescentOptimizer(self.learning_rate).minimize(mean_squares_error)
-            elif descent_method == 'rmsprop':
-                self.train_step = tf.train.RMSPropOptimizer(self.learning_rate, decay=0.95, momentum=0.95, epsilon=1e-2).minimize(mean_squares_error)
+            with tf.control_dependencies(ema_ops_list):
+                if descent_method == 'adam':
+                    self.train_step = tf.train.AdamOptimizer(self.learning_rate).minimize(mean_squares_error)
+                elif descent_method == 'grad':
+                    self.train_step = tf.train.GradientDescentOptimizer(self.learning_rate).minimize(mean_squares_error)
+                elif descent_method == 'rmsprop':
+                    self.train_step = tf.train.RMSPropOptimizer(self.learning_rate, decay=0.95, momentum=0.95, epsilon=1e-2).minimize(mean_squares_error)
 
 
         self.summary_op = tf.merge_all_summaries()
@@ -489,6 +467,8 @@ class qnn:
 
         # self.simple_batch_list = []
         self.replay_memory = deque(maxlen=replay_memory_size)
+
+        # self.print_batch_size = tf.Print(hidden_flat[0], [tf.shape(hidden_flat[0]), tf.shape(q_a)], first_n=1000)
 
 
 

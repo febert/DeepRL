@@ -43,11 +43,11 @@ class q_learning():
                  num_steps_until_train_step = None,
                  train_frequency = 1.0,
                  from_pixels = False,
-                 repeat_action_times = 4
+                 repeat_action_times = 2
                  ):
         self.from_pixels = from_pixels
         self.repeat_action_times = repeat_action_times
-        self.frame_downscaling = 10
+        self.frame_downscaling = 6
 
         if num_steps_until_train_step is None:
             num_steps_until_train_step = nn_batch_size
@@ -64,7 +64,14 @@ class q_learning():
         self.total_train_episodes = 0
 
         # lengths of all the tested episodes
+        if self.env_name=='MountainCar-v0':
+            self.max_test_length = 1000
+        elif self.env_name=='CartPole-v0':
+            self.max_test_length = 10000
+        else:
+            self.max_test_length = 1000
         self.test_lengths = []
+        self.test_lengths_std = []
         self.test_its = []
         self.test_runs_to_average = 5
 
@@ -77,19 +84,22 @@ class q_learning():
         ## stochastic or deterministic softmax-based actions
         self.policy_mode = policy_mode
 
-        # STATE NORMALIZATION
-        print('Calculating normalization by random action sampling...')
-        states = []
+        normalization_mean = None
+        normalization_var = None
+        if not self.from_pixels:
+            # STATE NORMALIZATION
+            print('Calculating normalization by random action sampling...')
+            states = []
 
-        while len(states) < 1e5:
-            self.env.reset()
-            done = False
-            while not done:
-                state, _, done, _ = self.env.step(self.env.action_space.sample())
-                states.append(state)
+            while len(states) < 1e5:
+                self.env.reset()
+                done = False
+                while not done:
+                    state, _, done, _ = self.env.step(self.env.action_space.sample())
+                    states.append(state)
 
-        normalization_mean = np.mean(states, axis=(0)).astype(np.float32)
-        normalization_var = np.var(states, axis=(0)).astype(np.float32)
+            normalization_mean = np.mean(states, axis=(0)).astype(np.float32)
+            normalization_var = np.var(states, axis=(0)).astype(np.float32)
 
         # if self.env_name == 'CartPole-v0':
         #     normalization_mean = np.zeros_like(normalization_mean)
@@ -121,8 +131,8 @@ class q_learning():
             self.env.render()
             self.img_height = self.env.viewer.height
             self.img_width = self.env.viewer.width
-            self.reduced_height = self.img_height//self.frame_downscaling
-            self.reduced_width = self.img_width//self.frame_downscaling
+            self.reduced_height = 84#self.img_height//self.frame_downscaling
+            self.reduced_width = 84#self.img_width//self.frame_downscaling
 
         # simultaneous evaluation through neural network
         self.qnn = qnn.qnn(self.statedim,
@@ -178,7 +188,7 @@ class q_learning():
                         self.env.render('rgb_array')\
                           .convert('L')\
                               .resize((self.reduced_width, self.reduced_height), \
-                                      Image.BILINEAR)))/255
+                                      Image.BILINEAR)))
     def get_cnn_input_tensor_from_deque(self, pixel_state_deque):
         return np.swapaxes(\
                     np.swapaxes(\
@@ -304,7 +314,9 @@ class q_learning():
                     print("exploration ", self.epsilon)
                     self.plot_training()
 
-                    self.test_lengths.append(np.mean([self.run_test_episode(limit=1000) for _ in range(self.test_runs_to_average)]))
+                    test_runs = [self.run_test_episode(limit=self.max_test_length) for _ in range(self.test_runs_to_average)]
+                    self.test_lengths.append(np.mean(test_runs))
+                    self.test_lengths_std.append(np.std(test_runs))
                     self.test_its.append(self.total_train_episodes)
                     self.plot_testing()
 
@@ -438,11 +450,16 @@ class q_learning():
         np_state = np.array(state)
         self.env.reset()
         self.env.state = np_state
+        # print('---------------------------')
+        # print(self.env.state)
 
         pixel_state = []
-        for _ in range(self.repeat_action_times):
+        pixel_state.append(self.get_render())
+        for _ in range(self.repeat_action_times -1):
             state, reward, done, info = self.env.step(1)
+            # print(state)
             pixel_state.append(self.get_render())
+        # print('---------------------------')
         return self.get_cnn_input_tensor_from_deque(pixel_state)
 
     def plot_deepQ_policy(self, mode='deterministic'):
@@ -506,9 +523,11 @@ class q_learning():
         if any(np.array(self.test_lengths > 0).flatten()):
             fig = plt.figure()
             if len(self.test_lengths) > 1000:
+                # plt.plot(np.convolve(self.test_lengths, np.ones(10)/10, mode='same'), '.', linewidth=0)
                 plt.plot(np.convolve(self.test_lengths, np.ones(10)/10, mode='same'), '.', linewidth=0)
             else:
-                plt.plot(self.test_its, self.test_lengths, '.', linewidth=0)
+                # plt.plot(self.test_its, self.test_lengths, '.', linewidth=0)
+                plt.errorbar(self.test_its, self.test_lengths, yerr=self.test_lengths_std, fmt='.')#, linewidth=0)
             plt.yscale('log')
             plt.xlabel("test episodes")
             plt.ylabel("timesteps")
