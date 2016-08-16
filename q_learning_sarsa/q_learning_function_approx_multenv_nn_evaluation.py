@@ -98,7 +98,30 @@ class q_learning():
         else:
             throw('ValueError')
         # simultaneous evaluation through neural network
-        self.qnn = qnn.qnn(self.statedim, self.num_actions, size_hidden=nn_size_hidden, batch_size=nn_batch_size, learning_rate=nn_learning_rate, is_a_prime_external=self.is_a_prime_external)
+        # self.qnn = qnn.qnn(self.statedim, self.num_actions, size_hidden=nn_size_hidden, batch_size=nn_batch_size, learning_rate=nn_learning_rate, is_a_prime_external=self.is_a_prime_external)
+        self.qnn = qnn.qnn(self.statedim,
+                           self.num_actions,
+                           discount=self.gamma,
+                           size_hidden=nn_size_hidden,
+                           batch_size=nn_batch_size,
+                           learning_rate=nn_learning_rate,
+                           is_a_prime_external=self.is_a_prime_external,
+                           replay_memory_size=1e6,
+                           descent_method='rmsprop',
+                        #    keep_prob_val=1.0,
+                        #    ema_decay_rate=0.0,
+                           normalization_mean=0.0,
+                           normalization_var=1.0,
+                           env_name=self.select_env,
+                        #    init_weights=None,
+                           from_pixels=False,
+                        #    input_width=self.reduced_width,
+                        #    input_height=self.reduced_height,
+                        #    input_channels=self.repeat_action_times,
+                        #    reg_weight=reg_weight,
+                        #    do_pretrain=do_pretrain,
+                        #    pretrain_steps=pretrain_steps
+                           )
 
         print('N_0', self.N_0)
         print('lambda', self.lambda_)
@@ -362,10 +385,10 @@ class q_learning():
                 # evaluation alone, to test a neural network
                 if not self.is_a_prime_external:
                     # Q learning
-                    self.qnn.train_batch(prev_state.reshape(1,-1), np.array(prev_action).reshape(-1), np.array(reward).reshape(-1), state.reshape(1,-1))
+                    self.qnn.train_batch(prev_state.reshape(1,-1), np.array(prev_action).reshape(-1), np.array(reward).reshape(-1), state.reshape(1,-1), done)
                 else:
                     # SARSA
-                    self.qnn.train_batch(prev_state.reshape(1,-1), np.array(prev_action).reshape(-1), np.array(reward).reshape(-1), state.reshape(1,-1), np.array(action).reshape(-1))
+                    self.qnn.train_batch(prev_state.reshape(1,-1), np.array(prev_action).reshape(-1), np.array(reward).reshape(-1), state.reshape(1,-1), done, np.array(action).reshape(-1))
 
                 prev_state = state
                 prev_action = action

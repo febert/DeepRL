@@ -42,7 +42,7 @@ class qnn:
         self.pretrain_steps = pretrain_steps
 
         if not from_pixels:
-            print("normaliztion mean", normalization_mean)
+            print("normalization mean", normalization_mean)
             print("normalization var", normalization_var)
 
         self.do_train_every_sample = do_train_every_sample
@@ -490,11 +490,12 @@ class qnn:
                 elif descent_method == 'rmsprop':
                     self.train_step = tf.train.RMSPropOptimizer(self.learning_rate, decay=0.95, momentum=0.95, epsilon=1e-2).minimize(mean_squares_error)
             # autoencoder regularization
-            with tf.name_scope('regularization'):
-                with tf.control_dependencies(ema_ops_list):
-                    self.recons_train_step = tf.train.RMSPropOptimizer(self.learning_rate, decay=0.95, momentum=0.95, epsilon=1e-2).minimize(self.reg_weight*recons_mse)
-                    self.recons_pretrain_step = tf.train.RMSPropOptimizer(self.learning_rate, decay=0.95, momentum=0.95, epsilon=1e-2).minimize(recons_mse)
-                    # self.recons_train_step = tf.train.GradientDescentOptimizer(self.learning_rate).minimize(recons_mse)
+            if from_pixels:
+                with tf.name_scope('regularization'):
+                    with tf.control_dependencies(ema_ops_list):
+                        self.recons_train_step = tf.train.RMSPropOptimizer(self.learning_rate, decay=0.95, momentum=0.95, epsilon=1e-2).minimize(self.reg_weight*recons_mse)
+                        self.recons_pretrain_step = tf.train.RMSPropOptimizer(self.learning_rate, decay=0.95, momentum=0.95, epsilon=1e-2).minimize(recons_mse)
+                        # self.recons_train_step = tf.train.GradientDescentOptimizer(self.learning_rate).minimize(recons_mse)
 
 
         self.summary_op = tf.merge_all_summaries()

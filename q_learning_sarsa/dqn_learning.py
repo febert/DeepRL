@@ -137,7 +137,6 @@ class q_learning():
             self.reduced_height = 84#self.img_height//self.frame_downscaling
             self.reduced_width = 84#self.img_width//self.frame_downscaling
 
-        # simultaneous evaluation through neural network
         self.qnn = qnn.qnn(self.statedim,
                            self.num_actions,
                            discount=self.gamma,
