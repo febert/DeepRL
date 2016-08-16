@@ -37,6 +37,7 @@ Host host01
 	4. add to .bashrc
 		 export PATH=/usr/local/cuda-7.5/bin:$PATH
 		 export LD_LIBRARY_PATH=~/cuda/lib64:$LD_LIBRARY_PATH
+If CUDA is not installed, install it to any directory (no root needed) and add it to the path variables.
 
 
 # How to get remote access to Jupyter notebook and Tensorboard
@@ -49,3 +50,6 @@ Host host01
 		# tensorboard
 		ssh -NL <other_local_port>:0.0.0.0:6006
 	* access through your browser with localhost:<local_port> and localhost:<other_local_port>
+
+# How to renew kerberos credentials in one line
+while true; do echo "password" | kinit; while true; do krenew; if [ $? -ne 0 ]; then break; fi; sleep 30m; done; done
