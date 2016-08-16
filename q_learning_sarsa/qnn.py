@@ -31,7 +31,16 @@ class qnn:
                  input_width = None,
                  input_height = None,
                  input_channels = None,
+                 reg_weight = 0.0,
+                 do_pretrain = False,
+                 pretrain_steps = 5000
                  ):
+
+        self.from_pixels = from_pixels
+        self.reg_weight = reg_weight
+        self.do_pretrain = do_pretrain
+        self.pretrain_steps = pretrain_steps
+
         if not from_pixels:
             print("normaliztion mean", normalization_mean)
             print("normalization var", normalization_var)
@@ -48,7 +57,14 @@ class qnn:
         self.init_weights = init_weights
         # print("init_weights", self.init_weights)
 
-        def weight_variable(shape, fan_in=True, act=None, conv=False):
+        self.weights = []
+        self.biases = []
+
+        def append_return(val, lst):
+            lst.append(val)
+            return val
+
+        def weight_variable(shape, fan_in=True, act=None, conv=False, normalization_factor=1.0):
             """
             Create a weight variable with appropriate initialization.
             Random to break symmetries.
@@ -59,6 +75,7 @@ class qnn:
                     print("fc", dim)
                 else:
                     dim=shape[0]*shape[1]*shape[2]
+                    # dim = dim * dim
                     print("conv", dim, shape[0], shape[1], shape[2])
                 if act is None:
                     std=1.0/np.sqrt(dim)
@@ -70,7 +87,7 @@ class qnn:
             print('weights std =', std)
 
             initial = tf.truncated_normal(shape, stddev=std)
-            return tf.Variable(initial)
+            return append_return(tf.Variable(initial)/normalization_factor, self.weights)
 
         def bias_variable(shape, fan_in_size=0, act=None):
             """
@@ -89,7 +106,7 @@ class qnn:
             print('bias std =', std)
             # initial = tf.constant(0.0, shape=shape)
             initial = tf.truncated_normal(shape, stddev=std)
-            return tf.Variable(initial)
+            return append_return(tf.Variable(initial), self.biases)
 
         def variable_summaries(var,name):
             with tf.name_scope('summaries'):
@@ -264,7 +281,7 @@ class qnn:
                         tf.histogram_summary(layer_name + '/activations_s_prime', activations_s_prime)
                     return (activations_s, activations_s_prime)
 
-        def nn_conv_dual_layer_with_decay(input_tensor_list, weights_shape, strides, layer_name, ema_ops_list, act=tf.nn.relu, decay=0.999):
+        def nn_conv_dual_layer_with_decay(input_tensor_list, weights_shape, strides, layer_name, ema_ops_list, act=tf.nn.relu, decay=0.999, normalization_factor=1.0):
             """Create a layer with two different inputs and two different outputs
                calculated with the same weights. Thought for Q_learning training.
 
@@ -276,7 +293,7 @@ class qnn:
             with tf.name_scope(layer_name):
                 # This Variable will hold the state of the weights for the layer
                 with tf.name_scope('weights'):
-                    weights = weight_variable(weights_shape,act=act,conv=True)
+                    weights = weight_variable(weights_shape, act=act, conv=True, normalization_factor=normalization_factor)
                     variable_summaries(weights, layer_name + '/weights')
                 with tf.name_scope('biases'):
                     print(weights_shape)
@@ -370,8 +387,10 @@ class qnn:
                 with tf.name_scope('uint_to_float'):
                     # self.s = (tf.to_float(self.s)/255.0 - 0.985126828509) / 0.078827111467
                     # self.s_prime = (tf.to_float(self.s_prime)/255.0 - 0.985126828509) / 0.078827111467
-                    self.s = 1.0 - tf.to_float(self.s)/255.0
-                    self.s_prime = 1.0 - tf.to_float(self.s_prime)/255.0
+                    # self.s = 1.0 - tf.to_float(self.s)/255.0
+                    # self.s_prime = 1.0 - tf.to_float(self.s_prime)/255.0
+                    self.s = tf.to_float(self.s)/255.0
+                    self.s_prime = tf.to_float(self.s_prime)/255.0
                 # BATCH NORM
                 # self.s_norm, self.s_prime_norm = dual_batch_norm((self.s, self.s_prime), [input_height,input_width,input_channels], 'batch_norm')
 
@@ -393,30 +412,47 @@ class qnn:
                 hidden = nn_dual_layer_with_decay(hidden_prev, size_hidden[idx-1], size_hidden[idx], 'layer'+str(idx+1), ema_ops_list, decay=ema_decay_rate)
                 with tf.name_scope('dropout'):
                     dropped = tf.nn.dropout(hidden[0], self.keep_prob), hidden[1]
-                hidden_prev = dropped
+                last_hidden = dropped
 
             last_hidden_size = size_hidden[-1]
                 # hidden_prev = hidden
         if from_pixels:
             # APPLY CONVOLUTIONAL LAYERS
-            hidden = nn_conv_dual_layer_with_decay((self.s, self.s_prime), [8,8,input_channels,32], [1,4,4,1], 'conv_layer'+str(1), ema_ops_list, act=tf.nn.relu, decay=ema_decay_rate)
+            conv1 = nn_conv_dual_layer_with_decay((self.s, self.s_prime), [8,8,input_channels,32], [1,4,4,1], 'conv_layer'+str(1), ema_ops_list, act=tf.nn.relu, decay=ema_decay_rate, normalization_factor=np.sqrt(8*8*input_channels))
             # hidden = nn_conv_dual_layer_with_decay((self.s_norm, self.s_prime_norm), [8,8,input_channels,32], [1,4,4,1], 'conv_layer'+str(1), ema_ops_list, act=tf.nn.relu, decay=ema_decay_rate)
             # hidden = dual_batch_norm(hidden, [np.ceil(input_width/4), np.ceil(input_width/4), 32], 'conv1_batch_norm')
-            hidden = nn_conv_dual_layer_with_decay(hidden, [4,4,32,64], [1,2,2,1], 'conv_layer'+str(2), ema_ops_list, act=tf.nn.relu, decay=ema_decay_rate)
+            conv2 = nn_conv_dual_layer_with_decay(conv1, [4,4,32,64], [1,2,2,1], 'conv_layer'+str(2), ema_ops_list, act=tf.nn.relu, decay=ema_decay_rate)
             # hidden = dual_batch_norm(hidden, [np.ceil(np.ceil(input_width/4)/2), np.ceil(np.ceil(input_width/4)/2), 64], 'conv2_batch_norm')
-            hidden = nn_conv_dual_layer_with_decay(hidden, [3,3,64,64], [1,1,1,1], 'conv_layer'+str(3), ema_ops_list, act=tf.nn.relu, decay=ema_decay_rate)
+            conv3 = nn_conv_dual_layer_with_decay(conv2, [3,3,64,64], [1,1,1,1], 'conv_layer'+str(3), ema_ops_list, act=tf.nn.relu, decay=ema_decay_rate)
             # hidden = dual_batch_norm(hidden, [np.ceil(np.ceil(input_width/4)/2), np.ceil(np.ceil(input_width/4)/2), 64], 'conv3_batch_norm')
             # last_conv_hidden_shape = tf.shape(hidden[0])
             # print(last_conv_hidden_shape)
             # last_conv_layer_output_size = last_conv_hidden_shape[1]*last_conv_hidden_shape[2]*last_conv_hidden_shape[3]
             last_conv_layer_output_size = np.int(np.ceil(np.ceil(input_width/4)/2) * np.ceil(np.ceil(input_height/4)/2) * 64)
-            hidden_flat = tf.reshape(hidden[0], [-1, last_conv_layer_output_size]), tf.reshape(hidden[1], [-1, last_conv_layer_output_size])
-            hidden_prev = nn_dual_layer_with_decay(hidden_flat, last_conv_layer_output_size, 512, 'fc_layer'+str(1), ema_ops_list, decay=ema_decay_rate)
+            conv3_flat = tf.reshape(conv3[0], [-1, last_conv_layer_output_size]), tf.reshape(conv3[1], [-1, last_conv_layer_output_size])
+            last_hidden = nn_dual_layer_with_decay(conv3_flat, last_conv_layer_output_size, 512, 'fc_layer'+str(1), ema_ops_list, decay=ema_decay_rate)
             # hidden_prev = dual_batch_norm(hidden_prev, [512], 'fc_batch_norm')
 
             last_hidden_size=512
 
             # RECONSTRUCTION
+            with tf.name_scope('reconstruction'):
+                conv3_flat_recons = tf.nn.relu(tf.matmul(last_hidden[0] - self.biases[-1], tf.transpose(self.weights[-1])))
+                conv3_recons = tf.reshape(conv3_flat_recons, tf.shape(conv3[0]))
+                conv2_recons = tf.nn.relu(tf.nn.conv2d_transpose(conv3_recons - self.biases[-2], self.weights[-2], tf.shape(conv2[0]), [1,1,1,1], padding='SAME'))
+                conv1_recons = tf.nn.relu(tf.nn.conv2d_transpose(conv2_recons - self.biases[-3], self.weights[-3], tf.shape(conv1[0]), [1,2,2,1], padding='SAME'))
+                s_recons = tf.nn.relu(tf.nn.conv2d_transpose(conv1_recons - self.biases[-4], self.weights[-4], tf.shape(self.s), [1,4,4,1], padding='SAME'))
+
+                # Image summary for comparison
+                tf.image_summary('original_a', tf.slice(self.s, [0,0,0,0], [-1,-1,-1,1]))
+                tf.image_summary('original_b', tf.slice(self.s, [0,0,0,1], [-1,-1,-1,1]))
+                tf.image_summary('reconstructed_a', tf.slice(s_recons, [0,0,0,0], [-1,-1,-1,1]))
+                tf.image_summary('reconstructed_b', tf.slice(s_recons, [0,0,0,1], [-1,-1,-1,1]))
+            with tf.name_scope('reconstruction_mse'):
+                recons_mse = tf.reduce_sum((self.s - s_recons)**2) / tf.to_float(tf.shape(self.s)[0])
+
+
+
 
 
         # self.is_a_prime_external = tf.placeholder(tf.bool)
@@ -425,7 +461,7 @@ class qnn:
         # OUTPUT LAYERS
         with tf.name_scope('output'):
             self.is_not_end_state = tf.placeholder(tf.float32, shape=[None], name='is_end_state_prime')
-            self.q_all, q_all_prime = nn_dual_layer_with_decay(hidden_prev, last_hidden_size, size_output, 'output_layer', ema_ops_list, act=None, decay=ema_decay_rate)
+            self.q_all, q_all_prime = nn_dual_layer_with_decay(last_hidden, last_hidden_size, size_output, 'output_layer', ema_ops_list, act=None, decay=ema_decay_rate)
             if self.is_a_prime_external:
                 # SARSA
                 q_prime = tf.reduce_sum(tf.mul(q_all_prime, a_prime_one_hot), reduction_indices=[1])
@@ -453,6 +489,12 @@ class qnn:
                     self.train_step = tf.train.GradientDescentOptimizer(self.learning_rate).minimize(mean_squares_error)
                 elif descent_method == 'rmsprop':
                     self.train_step = tf.train.RMSPropOptimizer(self.learning_rate, decay=0.95, momentum=0.95, epsilon=1e-2).minimize(mean_squares_error)
+            # autoencoder regularization
+            with tf.name_scope('regularization'):
+                with tf.control_dependencies(ema_ops_list):
+                    self.recons_train_step = tf.train.RMSPropOptimizer(self.learning_rate, decay=0.95, momentum=0.95, epsilon=1e-2).minimize(self.reg_weight*recons_mse)
+                    self.recons_pretrain_step = tf.train.RMSPropOptimizer(self.learning_rate, decay=0.95, momentum=0.95, epsilon=1e-2).minimize(recons_mse)
+                    # self.recons_train_step = tf.train.GradientDescentOptimizer(self.learning_rate).minimize(recons_mse)
 
 
         self.summary_op = tf.merge_all_summaries()
@@ -467,6 +509,8 @@ class qnn:
 
         # self.simple_batch_list = []
         self.replay_memory = deque(maxlen=replay_memory_size)
+
+        self.done_pretrain = False
 
         # self.print_batch_size = tf.Print(hidden_flat[0], [tf.shape(hidden_flat[0]), tf.shape(q_a)], first_n=1000)
 
@@ -525,7 +569,9 @@ class qnn:
         if learning_rate is None:
             learning_rate = self.learning_rate_value
 
-        if (len(self.replay_memory) >= 1e4) and (self.samples_count % (self.batch_size/train_frequency) == 0 or self.do_train_every_sample):
+        min_for_train = 1e4
+
+        if (len(self.replay_memory) >= min_for_train) and (self.samples_count % (self.batch_size/train_frequency) == 0 or self.do_train_every_sample):
             # fill list
             self.replay_memory.append((s,a,r,s_prime,a_prime,done))
 
@@ -555,16 +601,56 @@ class qnn:
             if self.training_steps_count % 100 == 0:
                 summary, _ = self.sess.run([self.summary_op, self.train_step], feed_dict=feed_dict)
                 self.summary_writer.add_summary(summary, self.training_steps_count)
+                #regularization
+                if self.reg_weight > 0.0:
+                    self.sess.run(self.recons_train_step, feed_dict=feed_dict)
             else:
-                self.sess.run(self.train_step, feed_dict=feed_dict)
+                self.sess.run([self.train_step], feed_dict=feed_dict)
+                #regularization
+                if self.reg_weight > 0.0:
+                    self.sess.run(self.recons_train_step, feed_dict=feed_dict)
 
 
             self.training_steps_count += 1
         else:
             # fill list
             self.replay_memory.append((s,a,r,s_prime,a_prime,done))
-            # print(self.simple_batch_list)
-        # feed_dict = {self.s: s, self.a: a.astype(np.int32), self.r: r, self.s_prime: s_prime}
+            if self.from_pixels and self.do_pretrain:
+                if len(self.replay_memory) >= min_for_train and not self.done_pretrain:
+                    print('pretraining')
+
+                    # initialize through autoencoder
+                    for i in range(self.pretrain_steps):
+                        if i % 100 == 0:
+                            print(str(i), end='')
+                        print('.', end='')
+                        if (i+1) % 100 == 0:
+                            print('')
+                        # sample random batch
+                        sample_idx = np.random.randint(0, len(self.replay_memory), [self.batch_size])
+                        batch = [self.replay_memory[i] for i in sample_idx]
+
+                        # train
+                        states, _, _, _, _, done = zip(*batch)
+                        # states, actions, rewards, states_prime, actions_prime, done = zip(*batch)
+                        states = np.squeeze(np.array(states))
+                        # actions = np.squeeze(np.array(actions))
+                        # rewards = np.squeeze(np.array(rewards))
+                        # states_prime = np.squeeze(np.array(states_prime))
+                        # actions_prime = np.squeeze(np.array(actions_prime))
+                        done = np.array(done)
+
+                        feed_dict = {self.s: states,
+                                     self.is_not_end_state: 1.0 - done,
+                                     self.keep_prob: self.keep_prob_val,
+                                     self.phase_train: True,
+                                     self.learning_rate: learning_rate}
+                        # if self.is_a_prime_external:
+                        #     feed_dict[self.a_prime] = actions_prime
+
+                        self.sess.run(self.recons_pretrain_step, feed_dict=feed_dict)
+
+                    self.done_pretrain = True
 
         self.samples_count += 1
 

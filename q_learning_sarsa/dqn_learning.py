@@ -43,7 +43,10 @@ class q_learning():
                  num_steps_until_train_step = None,
                  train_frequency = 1.0,
                  from_pixels = False,
-                 repeat_action_times = 2
+                 repeat_action_times = 2,
+                 reg_weight = 0.0,
+                 do_pretrain = False,
+                 pretrain_steps = 5000
                  ):
         self.from_pixels = from_pixels
         self.repeat_action_times = repeat_action_times
@@ -65,7 +68,7 @@ class q_learning():
 
         # lengths of all the tested episodes
         if self.env_name=='MountainCar-v0':
-            self.max_test_length = 1000
+            self.max_test_length = 10000
         elif self.env_name=='CartPole-v0':
             self.max_test_length = 10000
         else:
@@ -153,7 +156,10 @@ class q_learning():
                            from_pixels=self.from_pixels,
                            input_width=self.reduced_width,
                            input_height=self.reduced_height,
-                           input_channels=self.repeat_action_times
+                           input_channels=self.repeat_action_times,
+                           reg_weight=reg_weight,
+                           do_pretrain=do_pretrain,
+                           pretrain_steps=pretrain_steps
                            )
         self.learning_rate = nn_learning_rate
         self.train_frequency = train_frequency
