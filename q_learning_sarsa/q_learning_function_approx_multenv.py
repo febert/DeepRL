@@ -234,14 +234,21 @@ class q_learning():
                 action = self.policy(state, mode=self.policy_mode)
                 #                episode.append((state, action, reward))
 
+                # SARSA
                 # select the proper line from the full feature matrix (one line per action)
                 tile_features = self.get_full_feature(state)[action]
 
                 Qs_prime = tile_features.dot(self.w)
 
+                # Q-learning
+                Qs_prime_star = np.max(self.get_full_feature(state).dot(self.w))
+
+                if not (Qs_prime == Qs_prime_star):
+                    print('what?? wrong epsilon?')
+
                 delta_t = reward + self.gamma * Qs_prime - Qs
 
-                self.eligibiltiy_vector = self.eligibiltiy_vector * self.gamma * self.lambda_ + tile_features
+                self.eligibiltiy_vector = self.eligibiltiy_vector * self.gamma * self.lambda_ + prev_tile_features
 
                 self.w = (1-self.forget_rate)*self.w + self.alpha_w * delta_t * self.eligibiltiy_vector
 
@@ -444,12 +451,20 @@ class q_learning():
 
             fig = plt.figure()
 
-            ax = fig.add_subplot(111, projection='3d')
+            ax = fig.add_subplot(111)
             X, Y = np.meshgrid(x_range, v_range)
-            ax.plot_surface(X, Y, q_func, rstride=1, cstride=1, cmap=cm.jet, linewidth=0.1, antialiased=True)
+            # ax.plot_surface(X, Y, q_func, rstride=1, cstride=1, cmap=cm.jet, linewidth=0.1, antialiased=True)
+            im = ax.pcolormesh(X, Y, -q_func)
+            fig.colorbar(im)
             ax.set_xlabel("x")
             ax.set_ylabel("v")
-            ax.set_zlabel("negative value")
+
+            # ax = fig.add_subplot(111, projection='3d')
+            # X, Y = np.meshgrid(x_range, v_range)
+            # ax.plot_surface(X, Y, q_func, rstride=1, cstride=1, cmap=cm.jet, linewidth=0.1, antialiased=True)
+            # ax.set_xlabel("x")
+            # ax.set_ylabel("v")
+            # ax.set_zlabel("negative value")
             plt.show()
 
     def plot_value_function(self):
@@ -473,12 +488,20 @@ class q_learning():
 
         fig = plt.figure()
 
-        ax = fig.add_subplot(111, projection='3d')
+        ax = fig.add_subplot(111)
         X, Y = np.meshgrid(x_range, v_range)
-        ax.plot_wireframe(X, Y, value_func)
+        # ax.plot_surface(X, Y, q_func, rstride=1, cstride=1, cmap=cm.jet, linewidth=0.1, antialiased=True)
+        im = ax.pcolormesh(X, Y, -value_func)
+        fig.colorbar(im)
         ax.set_xlabel("x")
         ax.set_ylabel("v")
-        ax.set_zlabel("negative value")
+
+        # ax = fig.add_subplot(111, projection='3d')
+        # X, Y = np.meshgrid(x_range, v_range)
+        # ax.plot_wireframe(X, Y, value_func)
+        # ax.set_xlabel("x")
+        # ax.set_ylabel("v")
+        # ax.set_zlabel("negative value")
         plt.show()
 
     def savedata(self, dataname):
