@@ -321,7 +321,8 @@ class q_learning():
 
                     test_runs = [self.run_test_episode(limit=self.max_test_length) for _ in range(self.test_runs_to_average)]
                     self.test_lengths.append(np.mean(test_runs))
-                    self.test_lengths_std.append(np.std(test_runs))
+                    # self.test_lengths_std.append(np.std(test_runs))
+                    self.test_lengths_std.append( (- np.min(test_runs) + self.test_lengths[-1], np.max(test_runs) - self.test_lengths[-1]) )
                     self.test_its.append(self.total_train_episodes)
                     self.plot_testing()
 
@@ -532,7 +533,7 @@ class q_learning():
                 plt.plot(np.convolve(self.test_lengths, np.ones(10)/10, mode='same'), '.', linewidth=0)
             else:
                 # plt.plot(self.test_its, self.test_lengths, '.', linewidth=0)
-                plt.errorbar(self.test_its, self.test_lengths, yerr=self.test_lengths_std, fmt='.')#, linewidth=0)
+                plt.errorbar(self.test_its, self.test_lengths, yerr=np.transpose(self.test_lengths_std), fmt='.')#, linewidth=0)
             plt.yscale('log')
             plt.xlabel("test episodes")
             plt.ylabel("timesteps")
