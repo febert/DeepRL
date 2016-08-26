@@ -437,9 +437,11 @@ class qnn:
 
             # RECONSTRUCTION
             with tf.name_scope('reconstruction'):
-                conv3_flat_recons = tf.nn.relu(tf.matmul(last_hidden[0] - self.biases[-1], tf.transpose(self.weights[-1])))
-                conv3_recons = tf.reshape(conv3_flat_recons, tf.shape(conv3[0]))
-                conv2_recons = tf.nn.relu(tf.nn.conv2d_transpose(conv3_recons - self.biases[-2], self.weights[-2], tf.shape(conv2[0]), [1,1,1,1], padding='SAME'))
+		# WATCH OUT, forward layers have two channels for the two states!
+#                conv3_flat_recons = tf.nn.relu(tf.matmul(last_hidden[0] - self.biases[-1], tf.transpose(self.weights[-1])))
+#                conv3_recons = tf.reshape(conv3_flat_recons, tf.shape(conv3[0]))
+#                conv2_recons = tf.nn.relu(tf.nn.conv2d_transpose(conv3_recons - self.biases[-2], self.weights[-2], tf.shape(conv2[0]), [1,1,1,1], padding='SAME'))
+                conv2_recons = tf.nn.relu(tf.nn.conv2d_transpose(conv3[0] - self.biases[-2], self.weights[-2], tf.shape(conv2[0]), [1,1,1,1], padding='SAME'))
                 conv1_recons = tf.nn.relu(tf.nn.conv2d_transpose(conv2_recons - self.biases[-3], self.weights[-3], tf.shape(conv1[0]), [1,2,2,1], padding='SAME'))
                 s_recons = tf.nn.relu(tf.nn.conv2d_transpose(conv1_recons - self.biases[-4], self.weights[-4], tf.shape(self.s), [1,4,4,1], padding='SAME'))
 

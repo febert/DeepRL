@@ -72,7 +72,7 @@ class q_learning():
         elif self.env_name=='CartPole-v0':
             self.max_test_length = 10000
         else:
-            self.max_test_length = 1000
+            self.max_test_length = 10000
         self.test_lengths = []
         self.test_lengths_std = []
         self.test_its = []
