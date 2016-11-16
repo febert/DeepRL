@@ -2,7 +2,7 @@
 
 
 # How to create a python working environment:
-virtualenv --system-site-packages deeprl-python
+virtualenv --system-site-packages deeprl-python (not recommented in python 3)
 source ./deeprl-python/bin/activate
 pip install --upgrade pip
 	# check if there is a newer version. This link is only for 0.8
@@ -53,3 +53,10 @@ If CUDA is not installed, install it to any directory (no root needed) and add i
 
 # How to renew kerberos credentials in one line
 while true; do echo "password" | kinit; while true; do krenew; if [ $? -ne 0 ]; then break; fi; sleep 30m; done; done
+
+# DQN from_pixels
+A small modification of OpenAI's gym is required for efficiently obtaining images from the classic environments avoiding on-screen rendering. The changes can be found in https://github.com/garibarba/gym/commit/69c58d91d64cf3b28c44077bc30c599ed354af1e. Then a minimal change must be done in each environment in order to call the newly defined functions instead of the regular one.
+
+# xvfs, GLX and nvidia drivers
+These don't play well with each other. A solution is possible but requires reinstalling the nvidia drivers:
+https://davidsanwald.github.io/ec2-openAI-gym-tensorflow-GPU-cuda-deep-learning.html#ec2-openAI-gym-tensorflow-GPU-cuda-deep-learning
