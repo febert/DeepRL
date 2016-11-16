@@ -228,12 +228,13 @@ class q_learning():
 
             count = 0
             done = False
-            # running list of the last pixel states
-            pixel_state = deque(maxlen=self.repeat_action_times)
-            # fill initially
-            for _ in range(self.repeat_action_times):
-                pixel_state.append(self.get_render())
-            state_tensor = self.get_cnn_input_tensor_from_deque(pixel_state)
+            if self.from_pixels:
+                # running list of the last pixel states
+                pixel_state = deque(maxlen=self.repeat_action_times)
+                # fill initially
+                for _ in range(self.repeat_action_times):
+                    pixel_state.append(self.get_render())
+                state_tensor = self.get_cnn_input_tensor_from_deque(pixel_state)
 
             # choose first action
             if not self.from_pixels:
@@ -246,8 +247,9 @@ class q_learning():
                                           deepQ=True)
             # run episode
             while (not done):
-                state_prev_tensor = state_tensor
-                pixel_state_prev = copy.copy(pixel_state) # shallow copy
+                if self.from_pixels:
+                    state_prev_tensor = state_tensor
+                    pixel_state_prev = copy.copy(pixel_state) # shallow copy
                 if count > max_steps:
                     self.episode_lengths.append(count)
                     break
@@ -259,7 +261,8 @@ class q_learning():
                         pixel_state.append(self.get_render())
                     if done: break
 
-                state_tensor = self.get_cnn_input_tensor_from_deque(pixel_state)
+                if self.from_pixels:
+                    state_tensor = self.get_cnn_input_tensor_from_deque(pixel_state)
 
                 if not self.from_pixels:
                     action = self.policy(np.array(state).reshape((1,-1)), mode=self.policy_mode, deepQ=True)
@@ -344,11 +347,12 @@ class q_learning():
         episode_length = 0.
         state = self.env.reset()
 
-        # running list of the last pixel states
-        pixel_state = deque(maxlen=self.repeat_action_times)
-        # fill initially
-        for _ in range(self.repeat_action_times):
-            pixel_state.append(self.get_render())
+        if self.from_pixels:
+            # running list of the last pixel states
+            pixel_state = deque(maxlen=self.repeat_action_times)
+            # fill initially
+            for _ in range(self.repeat_action_times):
+                pixel_state.append(self.get_render())
 
         done = False
         while (not done):
@@ -511,7 +515,7 @@ class q_learning():
 
     def plot_training(self):
 
-        if any(np.array(self.episode_lengths > 0).flatten()):
+        if any(np.array(np.array(self.episode_lengths) > 0).flatten()):
             fig = plt.figure()
             if len(self.episode_lengths) > 1000:
                 plt.plot(np.arange(len(self.episode_lengths))[range(0,len(self.episode_lengths),10)],
@@ -526,7 +530,7 @@ class q_learning():
 
     def plot_testing(self):
 
-        if any(np.array(self.test_lengths > 0).flatten()):
+        if any(np.array(np.array(self.test_lengths) > 0).flatten()):
             fig = plt.figure()
             if len(self.test_lengths) > 1000:
                 # plt.plot(np.convolve(self.test_lengths, np.ones(10)/10, mode='same'), '.', linewidth=0)
